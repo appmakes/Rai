@@ -104,14 +104,20 @@ async fn handle_run(
         let parsed = task_parser::parse_task_file(task_path)?;
         let section = parsed.get_section(subtask)?;
 
-        let all_args = template::collect_all_args(
+        let declared_args = template::collect_all_args(
             &parsed.global_frontmatter.args,
             &section.frontmatter.args,
         );
 
-        let variables = if !all_args.is_empty() || !args.is_empty() {
-            let vars_in_template = template::find_variables(&section.content);
+        let vars_in_template = template::find_variables(&section.content);
 
+        let effective_args = if declared_args.is_empty() && !vars_in_template.is_empty() {
+            vars_in_template.clone()
+        } else {
+            declared_args
+        };
+
+        let variables = {
             if args.len() < vars_in_template.len() && !is_interactive() {
                 anyhow::bail!(
                     "Missing arguments. Expected {} ({}) but got {}. \
@@ -122,7 +128,7 @@ async fn handle_run(
                 );
             }
 
-            let mut mapped = template::map_args_to_variables(&all_args, args)?;
+            let mut mapped = template::map_args_to_variables(&effective_args, args)?;
 
             if is_interactive() {
                 for var in &vars_in_template {
@@ -136,8 +142,6 @@ async fn handle_run(
             }
 
             mapped
-        } else {
-            template::map_args_to_variables(&[], args)?
         };
 
         let rendered = template::render(&section.content, &variables)?;
