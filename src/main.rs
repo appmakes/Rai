@@ -1,13 +1,16 @@
 use clap::{Parser, Subcommand};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
-use dialoguer::{Input, Select};
+use dialoguer::{Input, Select, Confirm};
 use config::Config;
 use anyhow::Context;
+use std::path::Path;
 
 mod config;
 mod key_store;
 mod providers;
+mod task_parser;
+mod template;
 
 use providers::Provider;
 
@@ -19,7 +22,12 @@ fn get_api_key_helper(provider: &str) -> anyhow::Result<String> {
     key_store::get_api_key(provider)
 }
 
-#[derive(Parser)]#[command(name = "rai")]
+fn is_interactive() -> bool {
+    atty::is(atty::Stream::Stdin) && std::env::var("CI").is_err()
+}
+
+#[derive(Parser)]
+#[command(name = "rai")]
 #[command(version)]
 #[command(about = "A CLI tool to run AI tasks in terminal or CI/CD", long_about = None)]
 struct Cli {
@@ -42,7 +50,6 @@ enum Commands {
     /// Run a task
     Run {
         /// The task description or file path
-        #[arg(index = 1)]
         task: String,
 
         /// Optional sub-task name (e.g., #summary)
@@ -50,7 +57,7 @@ enum Commands {
         subtask: Option<String>,
 
         /// Arguments for the task
-        #[arg(last = true)]
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
     /// Create a new task file
@@ -65,14 +72,367 @@ enum Commands {
     },
 }
 
+fn resolve_provider(config: &Config) -> anyhow::Result<Box<dyn Provider>> {
+    match config.provider.to_lowercase().as_str() {
+        "poe" => Ok(Box::new(providers::poe::PoeProvider::new(&config.api_key))),
+        other => anyhow::bail!(
+            "Provider '{}' is not yet supported. Supported: poe",
+            other
+        ),
+    }
+}
+
+async fn handle_run(
+    task: &str,
+    subtask: Option<&str>,
+    args: &[String],
+    model_override: Option<&str>,
+) -> anyhow::Result<()> {
+    let mut config = Config::load()?;
+    config.resolve_api_key()?;
+
+    if config.api_key.is_empty() {
+        anyhow::bail!(
+            "No API key found. Please run `rai config` or set RAI_API_KEY environment variable."
+        );
+    }
+
+    let task_path = Path::new(task);
+    let is_file = task_path.exists() && task_path.is_file();
+
+    let (prompt, model) = if is_file {
+        let parsed = task_parser::parse_task_file(task_path)?;
+        let section = parsed.get_section(subtask)?;
+
+        let all_args = template::collect_all_args(
+            &parsed.global_frontmatter.args,
+            &section.frontmatter.args,
+        );
+
+        let variables = if !all_args.is_empty() || !args.is_empty() {
+            let vars_in_template = template::find_variables(&section.content);
+
+            if args.len() < vars_in_template.len() && !is_interactive() {
+                anyhow::bail!(
+                    "Missing arguments. Expected {} ({}) but got {}. \
+                     Provide all arguments in non-interactive mode.",
+                    vars_in_template.len(),
+                    vars_in_template.join(", "),
+                    args.len()
+                );
+            }
+
+            let mut mapped = template::map_args_to_variables(&all_args, args)?;
+
+            if is_interactive() {
+                for var in &vars_in_template {
+                    if !mapped.contains_key(var) {
+                        let value: String = Input::new()
+                            .with_prompt(format!("Enter value for '{}'", var))
+                            .interact_text()?;
+                        mapped.insert(var.clone(), value);
+                    }
+                }
+            }
+
+            mapped
+        } else {
+            template::map_args_to_variables(&[], args)?
+        };
+
+        let rendered = template::render(&section.content, &variables)?;
+
+        let effective_model = model_override
+            .map(|s| s.to_string())
+            .or_else(|| parsed.effective_model(subtask))
+            .unwrap_or(config.default_model.clone());
+
+        info!("Task: {} (section: {})", task, section.name);
+        (rendered, effective_model)
+    } else {
+        let model = model_override
+            .map(|s| s.to_string())
+            .unwrap_or(config.default_model.clone());
+        (task.to_string(), model)
+    };
+
+    let provider_impl = resolve_provider(&config)?;
+    info!("Using provider: {}, model: {}", config.provider, model);
+
+    println!("Sending request to {}...", config.provider);
+    let response = provider_impl.chat(&model, &prompt).await?;
+    println!("\nResponse:\n{}", response);
+
+    Ok(())
+}
+
+fn handle_create(filename: &str) -> anyhow::Result<()> {
+    let path = Path::new(filename);
+    if path.exists() {
+        anyhow::bail!("File '{}' already exists. Choose a different name.", filename);
+    }
+
+    if !is_interactive() {
+        anyhow::bail!("Cannot run `rai create` in non-interactive mode (CI/CD). Create the task file manually.");
+    }
+
+    let task_name: String = Input::new()
+        .with_prompt("Task name (H1 heading)")
+        .interact_text()?;
+
+    let task_description: String = Input::new()
+        .with_prompt("Task description / prompt")
+        .interact_text()?;
+
+    let model: String = Input::new()
+        .with_prompt("Model (leave empty for default)")
+        .default(String::new())
+        .interact_text()?;
+
+    let args_input: String = Input::new()
+        .with_prompt("Variables (comma-separated, e.g. filename,language)")
+        .default(String::new())
+        .interact_text()?;
+
+    let args: Vec<String> = args_input
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let wants_subtask = Confirm::new()
+        .with_prompt("Add a sub-task?")
+        .default(false)
+        .interact()?;
+
+    let mut subtasks: Vec<(String, String)> = Vec::new();
+    if wants_subtask {
+        loop {
+            let sub_name: String = Input::new()
+                .with_prompt("Sub-task name (H2 heading)")
+                .interact_text()?;
+            let sub_desc: String = Input::new()
+                .with_prompt("Sub-task description / prompt")
+                .interact_text()?;
+            subtasks.push((sub_name, sub_desc));
+
+            let add_more = Confirm::new()
+                .with_prompt("Add another sub-task?")
+                .default(false)
+                .interact()?;
+            if !add_more {
+                break;
+            }
+        }
+    }
+
+    let mut content = String::new();
+
+    // Frontmatter
+    content.push_str("---\n");
+    if !model.is_empty() {
+        content.push_str(&format!("model: {}\n", model));
+    }
+    if !args.is_empty() {
+        content.push_str("args:\n");
+        for arg in &args {
+            content.push_str(&format!("  - {}\n", arg));
+        }
+    }
+    content.push_str("---\n\n");
+
+    // Main task
+    content.push_str(&format!("# {}\n", task_name));
+    content.push_str(&format!("{}\n", task_description));
+
+    // Sub-tasks
+    for (name, desc) in &subtasks {
+        content.push_str(&format!("\n## {}\n", name));
+        content.push_str(&format!("{}\n", desc));
+    }
+
+    std::fs::write(path, &content)
+        .with_context(|| format!("Failed to write task file: {}", filename))?;
+
+    println!("Created task file: {}", filename);
+    println!("\nGenerated content:");
+    println!("{}", content);
+
+    Ok(())
+}
+
+fn handle_plan(task_file: &str) -> anyhow::Result<()> {
+    let path = Path::new(task_file);
+    if !path.exists() {
+        anyhow::bail!("Task file '{}' not found.", task_file);
+    }
+
+    let parsed = task_parser::parse_task_file(path)?;
+
+    println!("=== Task Plan: {} ===\n", task_file);
+
+    // Show global frontmatter
+    if let Some(model) = &parsed.global_frontmatter.model {
+        println!("Model: {}", model);
+    }
+    if let Some(temp) = parsed.global_frontmatter.temperature {
+        println!("Temperature: {}", temp);
+    }
+    if !parsed.global_frontmatter.args.is_empty() {
+        println!(
+            "Global args: {}",
+            parsed.global_frontmatter.args.join(", ")
+        );
+    }
+    println!();
+
+    // Show main task
+    if let Some(main) = &parsed.main_task {
+        println!("--- Main Task: {} ---", main.name);
+        let vars = template::find_variables(&main.content);
+        if !vars.is_empty() {
+            println!("  Variables: {}", vars.join(", "));
+        }
+        println!("  Preview:");
+        for line in main.content.lines().take(5) {
+            println!("    {}", line);
+        }
+        if main.content.lines().count() > 5 {
+            println!("    ...");
+        }
+        println!();
+    }
+
+    // Show subtasks
+    let subtask_names = parsed.list_subtasks();
+    if !subtask_names.is_empty() {
+        println!("--- Sub-tasks ---");
+        for name in &subtask_names {
+            let section = parsed.subtasks.get(*name).unwrap();
+            let vars = template::find_variables(&section.content);
+            print!("  [{}]", name);
+            if !vars.is_empty() {
+                print!(" (vars: {})", vars.join(", "));
+            }
+            if !section.frontmatter.args.is_empty() {
+                print!(
+                    " (args: {})",
+                    section.frontmatter.args.join(", ")
+                );
+            }
+            println!();
+        }
+        println!();
+    }
+
+    if !is_interactive() {
+        println!("Non-interactive mode: use `rai run {} --subtask <name> [args...]` to execute.", task_file);
+        return Ok(());
+    }
+
+    // Interactive: ask which section to run
+    let mut options: Vec<String> = Vec::new();
+    if parsed.main_task.is_some() {
+        options.push("(main task)".to_string());
+    }
+    for name in &subtask_names {
+        options.push(format!("#{}", name));
+    }
+    options.push("(cancel)".to_string());
+
+    let selection = Select::new()
+        .with_prompt("Select a task to execute")
+        .items(&options)
+        .default(0)
+        .interact_opt()?;
+
+    match selection {
+        Some(idx) => {
+            let cancel_idx = options.len() - 1;
+            if idx == cancel_idx {
+                println!("Cancelled.");
+                return Ok(());
+            }
+
+            let has_main = parsed.main_task.is_some();
+            let subtask_opt = if has_main && idx == 0 {
+                None
+            } else {
+                let sub_idx = if has_main { idx - 1 } else { idx };
+                Some(subtask_names[sub_idx])
+            };
+
+            let section = parsed.get_section(subtask_opt)?;
+            let all_args = template::collect_all_args(
+                &parsed.global_frontmatter.args,
+                &section.frontmatter.args,
+            );
+            let vars = template::find_variables(&section.content);
+
+            let mut variable_values = std::collections::HashMap::new();
+            for var in &vars {
+                let prompt_label = if all_args.contains(var) {
+                    var.to_string()
+                } else {
+                    format!("{} (undeclared)", var)
+                };
+                let value: String = Input::new()
+                    .with_prompt(prompt_label)
+                    .interact_text()?;
+                variable_values.insert(var.clone(), value);
+            }
+
+            let rendered = template::render(&section.content, &variable_values)?;
+
+            println!("\n=== Final Prompt ===");
+            println!("{}", rendered);
+
+            let approx_tokens = rendered.split_whitespace().count() * 4 / 3;
+            println!("\nEstimated tokens: ~{}", approx_tokens);
+
+            let confirm = Confirm::new()
+                .with_prompt("Execute this task?")
+                .default(true)
+                .interact()?;
+
+            if !confirm {
+                println!("Cancelled.");
+                return Ok(());
+            }
+
+            println!("\nTo execute, run:");
+            let args_str: Vec<String> = vars
+                .iter()
+                .filter_map(|v| variable_values.get(v).cloned())
+                .collect();
+
+            if let Some(sub) = subtask_opt {
+                println!(
+                    "  rai run {} --subtask {} {}",
+                    task_file,
+                    sub,
+                    args_str.join(" ")
+                );
+            } else {
+                println!("  rai run {} {}", task_file, args_str.join(" "));
+            }
+        }
+        None => {
+            println!("Cancelled.");
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging
     let log_level = match cli.verbose {
-        0 => Level::INFO,
-        1 => Level::DEBUG,
+        0 => Level::WARN,
+        1 => Level::INFO,
+        2 => Level::DEBUG,
         _ => Level::TRACE,
     };
 
@@ -89,11 +449,19 @@ async fn main() -> anyhow::Result<()> {
 
     match &cli.command {
         Some(Commands::Config) => {
+            if !is_interactive() {
+                anyhow::bail!(
+                    "Cannot run `rai config` in non-interactive mode. \
+                     Set RAI_API_KEY and configure via environment variables or config file."
+                );
+            }
+
             info!("Config command selected");
             let mut config = Config::load()?;
 
             let providers = vec!["poe", "openai", "anthropic", "google"];
-            let default_provider_index = providers.iter()
+            let default_provider_index = providers
+                .iter()
                 .position(|&p| p == config.provider)
                 .unwrap_or(0);
 
@@ -116,55 +484,43 @@ async fn main() -> anyhow::Result<()> {
                 .with_prompt("API Key (saved to system keyring)")
                 .default(String::new())
                 .interact_text()?;
-            
-            // Save API key to keyring
+
             set_api_key_helper(&provider, &api_key)
                 .context("Failed to save API key to keyring")?;
 
             let default_model: String = Input::new()
                 .with_prompt("Default Model")
-                .default(if config.default_model.is_empty() { "gpt-4o".to_string() } else { config.default_model.clone() })
+                .default(if config.default_model.is_empty() {
+                    "gpt-4o".to_string()
+                } else {
+                    config.default_model.clone()
+                })
                 .interact_text()?;
             config.default_model = default_model;
 
             config.save()?;
             println!("Configuration saved successfully!");
         }
-        Some(Commands::Run { task, subtask: _, args: _ }) => {
-            info!("Running task: {}", task);
-            
-            let mut config = Config::load()?;
-            config.resolve_api_key()?;
-            
-            if config.api_key.is_empty() {
-                anyhow::bail!("No API key found. Please run `rai config` or set RAI_API_KEY environment variable.");
-            }
-
-            let provider_impl: Box<dyn Provider> = match config.provider.to_lowercase().as_str() {
-                "poe" => Box::new(providers::poe::PoeProvider::new(&config.api_key)),
-                _ => anyhow::bail!("Provider '{}' is not yet supported. Only 'poe' is supported in this phase.", config.provider),
-            };
-
-            let model = cli.model.clone().unwrap_or(config.default_model);
-            info!("Using provider: {}, model: {}", config.provider, model);
-            
-            println!("Sending request to {}...", config.provider);
-            let response = provider_impl.chat(&model, &task).await?;
-            println!("\nResponse:\n{}", response);
-        },
+        Some(Commands::Run {
+            task,
+            subtask,
+            args,
+        }) => {
+            handle_run(
+                task,
+                subtask.as_deref(),
+                args,
+                cli.model.as_deref(),
+            )
+            .await?;
+        }
         Some(Commands::Create { filename }) => {
-            info!("Create command selected");
-            info!("Filename: {}", filename);
-            // TODO: Implement create logic
+            handle_create(filename)?;
         }
         Some(Commands::Plan { task_file }) => {
-            info!("Plan command selected");
-            info!("Task file: {}", task_file);
-            // TODO: Implement plan logic
+            handle_plan(task_file)?;
         }
         None => {
-            // If no subcommand is provided, maybe we should default to help or something else?
-            // For now, let's just print help
             use clap::CommandFactory;
             Cli::command().print_help()?;
         }
