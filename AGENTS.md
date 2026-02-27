@@ -7,15 +7,21 @@
 ### Build / Test / Lint
 
 - `cargo build` — debug build
-- `cargo test` — run tests (no tests exist yet)
-- `cargo clippy` — lint (there is a pre-existing `needless_borrow` warning in `src/main.rs:152`)
+- `cargo test` — run all unit + integration tests (29 tests total)
+- `cargo clippy` — lint (should pass clean)
 - `cargo build --release` — optimized build
 
 ### Running the CLI
 
 The binary is at `target/debug/rai` (debug) or `target/release/rai` (release).
 
-**Important:** The `rai run` subcommand panics in debug builds due to a clap debug assertion about conflicting positional arguments (`task` and `args`). Use the **release** binary (`cargo build --release`) to test `rai run`.
+Key commands:
+- `rai run "prompt"` — ad-hoc AI query
+- `rai run task.md` — file-based task execution
+- `rai run task.md --subtask security arg1` — sub-task with arguments
+- `rai plan task.md` — preview task structure and variables
+- `rai create output.md` — interactive task file wizard
+- `rai config` — interactive provider/model configuration
 
 ### Configuration
 
@@ -23,6 +29,7 @@ The binary is at `target/debug/rai` (debug) or `target/release/rai` (release).
 - API key resolution order: `RAI_API_KEY` env var → provider-specific env var (e.g. `POE_API_KEY`) → OS keyring
 - Only the `poe` provider is implemented; set `provider = "poe"` in config
 - The `keyring` crate requires `libdbus-1-dev` on Linux (system dependency)
+- CI/CD mode (detected via `CI` env var or non-TTY stdin) disables interactive prompts
 
 ### System dependencies
 
