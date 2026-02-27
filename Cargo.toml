@@ -1,0 +1,23 @@
+[package]
+name = "rai"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["appmakes.io"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.95"
+async-trait = "0.1.89"
+clap = { version = "4.5.23", features = ["derive"] }
+dialoguer = "0.11.0"
+directories = "6.0.0"
+keyring = "3.6.3"
+reqwest = { version = "0.13.2", features = ["json", "blocking"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.43.0", features = ["full"] }
+toml = "0.8.19"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
