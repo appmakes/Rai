@@ -88,9 +88,16 @@ fn resolve_provider(config: &Config) -> anyhow::Result<Box<dyn Provider>> {
     }
 }
 
-fn read_piped_stdin() -> anyhow::Result<Option<String>> {
+#[derive(Debug, PartialEq, Eq)]
+enum PipedStdin {
+    NotPiped,
+    Empty,
+    Content(String),
+}
+
+fn read_piped_stdin() -> anyhow::Result<PipedStdin> {
     if atty::is(atty::Stream::Stdin) {
-        return Ok(None);
+        return Ok(PipedStdin::NotPiped);
     }
 
     let mut stdin_content = String::new();
@@ -99,10 +106,25 @@ fn read_piped_stdin() -> anyhow::Result<Option<String>> {
         .context("Failed to read piped stdin")?;
 
     if stdin_content.trim().is_empty() {
-        Ok(None)
+        Ok(PipedStdin::Empty)
     } else {
-        Ok(Some(stdin_content))
+        Ok(PipedStdin::Content(stdin_content))
     }
+}
+
+fn ensure_non_empty_piped_stdin(piped_stdin: &PipedStdin) -> anyhow::Result<()> {
+    if matches!(piped_stdin, PipedStdin::Empty) {
+        anyhow::bail!(
+            "Piped content is empty.\n\
+No stdin text was received from the previous command.\n\
+Suggestions:\n\
+  1. Quote or escape special URL characters such as '&'.\n\
+  2. Follow redirects when fetching web pages (`curl -L` or `curl -Ls`).\n\
+  3. Verify stdin size before piping (`... | wc -c`)."
+        );
+    }
+
+    Ok(())
 }
 
 fn compose_adhoc_prompt(task: &str, piped_stdin: Option<&str>) -> String {
@@ -140,6 +162,18 @@ async fn handle_run(
     args: &[String],
     model_override: Option<&str>,
 ) -> anyhow::Result<()> {
+    let task_path = Path::new(task);
+    let is_file = task_path.exists() && task_path.is_file();
+    let piped_stdin = if is_file {
+        PipedStdin::NotPiped
+    } else {
+        read_piped_stdin()?
+    };
+
+    if !is_file {
+        ensure_non_empty_piped_stdin(&piped_stdin)?;
+    }
+
     let mut config = Config::load()?;
     config.resolve_api_key()?;
 
@@ -148,10 +182,6 @@ async fn handle_run(
             "No API key found. Please run `rai config` or set RAI_API_KEY environment variable."
         );
     }
-
-    let task_path = Path::new(task);
-    let is_file = task_path.exists() && task_path.is_file();
-    let piped_stdin = if is_file { None } else { read_piped_stdin()? };
 
     let (prompt, model) = if is_file {
         let parsed = task_parser::parse_task_file(task_path)?;
@@ -208,7 +238,11 @@ async fn handle_run(
         let model = model_override
             .map(|s| s.to_string())
             .unwrap_or(config.default_model.clone());
-        (compose_adhoc_prompt(task, piped_stdin.as_deref()), model)
+        let piped_content = match &piped_stdin {
+            PipedStdin::Content(content) => Some(content.as_str()),
+            PipedStdin::NotPiped | PipedStdin::Empty => None,
+        };
+        (compose_adhoc_prompt(task, piped_content), model)
     };
 
     let provider_impl = resolve_provider(&config)?;
@@ -579,7 +613,9 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compose_adhoc_prompt, parse_shorthand_args};
+    use super::{
+        compose_adhoc_prompt, ensure_non_empty_piped_stdin, parse_shorthand_args, PipedStdin,
+    };
 
     #[test]
     fn test_compose_adhoc_prompt_without_stdin() {
@@ -609,5 +645,21 @@ mod tests {
 
         assert!(subtask.is_none());
         assert_eq!(args, raw);
+    }
+
+    #[test]
+    fn test_empty_piped_stdin_returns_helpful_error() {
+        let error = ensure_non_empty_piped_stdin(&PipedStdin::Empty).unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains("Piped content is empty"));
+        assert!(message.contains("Suggestions"));
+        assert!(message.contains("curl -L"));
+    }
+
+    #[test]
+    fn test_non_empty_piped_stdin_passes_validation() {
+        let result = ensure_non_empty_piped_stdin(&PipedStdin::Content("text".to_string()));
+        assert!(result.is_ok());
     }
 }

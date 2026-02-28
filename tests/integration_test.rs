@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn rai_bin() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_rai"));
@@ -77,6 +77,21 @@ fn test_shorthand_adhoc_no_api_key() {
         "Expected 'No API key found' in stderr: {}",
         stderr
     );
+}
+
+#[test]
+fn test_shorthand_adhoc_empty_piped_stdin_shows_suggestions() {
+    let output = rai_bin()
+        .args(["summarize this"])
+        .env("RAI_API_KEY", "test")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Piped content is empty"));
+    assert!(stderr.contains("Suggestions"));
+    assert!(stderr.contains("curl -L"));
 }
 
 #[test]
