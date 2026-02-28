@@ -62,6 +62,24 @@ fn test_run_adhoc_no_api_key() {
 }
 
 #[test]
+fn test_shorthand_adhoc_no_api_key() {
+    let output = rai_bin()
+        .args(["Hello world"])
+        .env_remove("RAI_API_KEY")
+        .env_remove("POE_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No API key found"),
+        "Expected 'No API key found' in stderr: {}",
+        stderr
+    );
+}
+
+#[test]
 fn test_config_rejects_ci() {
     let output = rai_bin().arg("config").output().unwrap();
     assert!(!output.status.success());
@@ -82,10 +100,7 @@ fn test_create_rejects_ci() {
 
 #[test]
 fn test_plan_nonexistent_file() {
-    let output = rai_bin()
-        .args(["plan", "nonexistent.md"])
-        .output()
-        .unwrap();
+    let output = rai_bin().args(["plan", "nonexistent.md"]).output().unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("not found"));
@@ -93,10 +108,7 @@ fn test_plan_nonexistent_file() {
 
 #[test]
 fn test_plan_demo_task() {
-    let output = rai_bin()
-        .args(["plan", "demo/task.md"])
-        .output()
-        .unwrap();
+    let output = rai_bin().args(["plan", "demo/task.md"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Task Plan"));
@@ -137,6 +149,18 @@ fn test_run_task_file_missing_args_ci() {
 fn test_run_task_file_missing_subtask() {
     let output = rai_bin()
         .args(["run", "demo/task.md", "--subtask", "nonexistent", "arg1"])
+        .env("RAI_API_KEY", "test")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not found"));
+}
+
+#[test]
+fn test_shorthand_task_file_missing_subtask() {
+    let output = rai_bin()
+        .args(["demo/task.md", "#nonexistent", "arg1"])
         .env("RAI_API_KEY", "test")
         .output()
         .unwrap();
