@@ -55,7 +55,7 @@ If your `task.md` has `{{ filename }}`, the above command will inject `src/main.
 Use `--bill` to print API usage for the current command:
 
 ```bash
-rai --bill "Summarize this"
+rai run "Summarize this" --bill
 ```
 
 At the end of execution, Rai prints:

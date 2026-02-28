@@ -121,7 +121,7 @@ fn test_run_adhoc_no_api_key() {
 #[test]
 fn test_bill_flag_reports_zero_usage_when_no_api_call_is_made() {
     let output = rai_bin()
-        .args(["--bill", "run", "Hello world"])
+        .args(["run", "Hello world", "--bill"])
         .env_remove("RAI_API_KEY")
         .env_remove("POE_API_KEY")
         .env_remove("OPENAI_API_KEY")
