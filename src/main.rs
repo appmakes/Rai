@@ -54,6 +54,7 @@ fn extract_subtask_from_args(
 #[command(version)]
 #[command(about = "A CLI tool to run AI tasks in terminal or CI/CD", long_about = None)]
 #[command(args_conflicts_with_subcommands = true)]
+#[command(subcommand_precedence_over_arg = true)]
 struct Cli {
     /// Turn debugging information on
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
