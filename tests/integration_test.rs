@@ -6,6 +6,8 @@ fn rai_bin() -> Command {
     cmd
 }
 
+// --- Basic CLI tests ---
+
 #[test]
 fn test_help_output() {
     let output = rai_bin().arg("--help").output().unwrap();
@@ -16,6 +18,7 @@ fn test_help_output() {
     assert!(stdout.contains("run"));
     assert!(stdout.contains("create"));
     assert!(stdout.contains("plan"));
+    assert!(stdout.contains("[TASK]"), "Should show implicit TASK arg");
 }
 
 #[test]
@@ -38,10 +41,32 @@ fn test_run_help() {
 #[test]
 fn test_no_subcommand_shows_help() {
     let output = rai_bin().output().unwrap();
-    assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
 }
+
+// --- Config, Create guards ---
+
+#[test]
+fn test_config_rejects_ci() {
+    let output = rai_bin().arg("config").output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("non-interactive"));
+}
+
+#[test]
+fn test_create_rejects_ci() {
+    let output = rai_bin()
+        .args(["create", "test_output.md"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("non-interactive"));
+}
+
+// --- Run command tests ---
 
 #[test]
 fn test_run_adhoc_no_api_key() {
@@ -62,23 +87,153 @@ fn test_run_adhoc_no_api_key() {
 }
 
 #[test]
-fn test_config_rejects_ci() {
-    let output = rai_bin().arg("config").output().unwrap();
-    assert!(!output.status.success());
+fn test_run_adhoc_reaches_provider() {
+    let output = rai_bin()
+        .args(["run", "Hello"])
+        .env("RAI_API_KEY", "test-dummy")
+        .output()
+        .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("non-interactive"));
+    assert!(
+        !output.status.success(),
+        "Expected failure with dummy key"
+    );
+    assert!(
+        stderr.contains("API") || stderr.contains("error") || stderr.contains("not yet supported"),
+        "Expected API or provider error, stderr: {}",
+        stderr
+    );
 }
 
 #[test]
-fn test_create_rejects_ci() {
+fn test_run_task_file_missing_args_ci() {
     let output = rai_bin()
-        .args(["create", "test_output.md"])
+        .args(["run", "demo/task.md"])
+        .env("RAI_API_KEY", "test")
         .output()
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("non-interactive"));
+    assert!(stderr.contains("Missing arguments"));
 }
+
+#[test]
+fn test_run_task_file_missing_subtask() {
+    let output = rai_bin()
+        .args(["run", "demo/task.md", "--subtask", "nonexistent", "arg1"])
+        .env("RAI_API_KEY", "test")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not found"));
+}
+
+// --- #subtask shorthand tests ---
+
+#[test]
+fn test_run_hash_subtask_shorthand() {
+    let output = rai_bin()
+        .args(["run", "demo/task.md", "#security", "src/main.rs"])
+        .env("RAI_API_KEY", "test-dummy")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("API") || stdout.contains("Sending request"),
+        "Should reach API with #subtask shorthand. stdout: {}, stderr: {}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_run_hash_subtask_nonexistent() {
+    let output = rai_bin()
+        .args(["run", "demo/task.md", "#nonexistent", "arg1"])
+        .env("RAI_API_KEY", "test")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found"),
+        "Expected 'not found' error for bad #subtask: {}",
+        stderr
+    );
+}
+
+// --- Implicit run/plan (no subcommand) tests ---
+
+#[test]
+fn test_implicit_run_adhoc() {
+    let output = rai_bin()
+        .args(["Hello from implicit"])
+        .env("RAI_API_KEY", "test-dummy")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("API") || stdout.contains("Sending request"),
+        "Implicit run should reach API. stdout: {}, stderr: {}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_implicit_run_with_task_file_and_args() {
+    let output = rai_bin()
+        .args(["demo/task.md", "src/main.rs"])
+        .env("RAI_API_KEY", "test-dummy")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("API") || stdout.contains("Sending request"),
+        "Implicit run with file+args should reach API. stdout: {}, stderr: {}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_implicit_run_with_hash_subtask() {
+    let output = rai_bin()
+        .args(["demo/task.md", "#security", "src/main.rs"])
+        .env("RAI_API_KEY", "test-dummy")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("API") || stdout.contains("Sending request"),
+        "Implicit run with #subtask should reach API. stdout: {}, stderr: {}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_implicit_task_file_missing_args_ci() {
+    let output = rai_bin()
+        .args(["demo/task.md"])
+        .env("RAI_API_KEY", "test")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Missing arguments"),
+        "Implicit mode with missing args in CI should fail: {}",
+        stderr
+    );
+}
+
+// --- Plan command tests ---
 
 #[test]
 fn test_plan_nonexistent_file() {
@@ -122,47 +277,28 @@ fn test_plan_template_task() {
 }
 
 #[test]
-fn test_run_task_file_missing_args_ci() {
+fn test_plan_with_hash_subtask() {
     let output = rai_bin()
-        .args(["run", "demo/task.md"])
-        .env("RAI_API_KEY", "test")
+        .args(["plan", "demo/task.md", "#security"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Missing arguments"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Task Plan"));
+    assert!(stdout.contains("Non-interactive mode"));
 }
 
 #[test]
-fn test_run_task_file_missing_subtask() {
+fn test_plan_hint_uses_shorthand() {
     let output = rai_bin()
-        .args(["run", "demo/task.md", "--subtask", "nonexistent", "arg1"])
-        .env("RAI_API_KEY", "test")
+        .args(["plan", "demo/task.md"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not found"));
-}
-
-#[test]
-fn test_run_adhoc_reaches_provider() {
-    let output = rai_bin()
-        .args(["run", "Hello"])
-        .env("RAI_API_KEY", "test-dummy")
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !output.status.success(),
-        "Expected failure with dummy key, stdout: {}, stderr: {}",
-        stdout,
-        stderr
-    );
-    assert!(
-        stderr.contains("API") || stderr.contains("error") || stderr.contains("not yet supported"),
-        "Expected API or provider error, stderr: {}",
-        stderr
+        stdout.contains("rai demo/task.md"),
+        "Plan hint should use shorthand syntax: {}",
+        stdout
     );
 }
