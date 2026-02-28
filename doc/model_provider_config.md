@@ -24,6 +24,19 @@ This will prompt you for:
 2. **API Key**: Securely stored in your system keyring.
 3. **Default Model**: e.g., `gpt-4o`, `claude-3-opus`.
 
+You can also configure providers manually in `~/.config/rai/config.toml`:
+
+```toml
+providers = ["poe", "openai"]
+default_provider = "poe"
+default_model = "gpt-4o"
+```
+
+Provider selection rules:
+- If exactly one provider is configured, Rai uses that provider.
+- If multiple providers are configured, Rai uses `default_provider` when present.
+- If `default_provider` is missing/invalid, Rai uses the first provider in `providers`.
+
 ## Environment Variables
 
 Rai supports setting API keys via environment variables for automation or to piggyback on existing CLI tools.

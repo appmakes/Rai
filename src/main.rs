@@ -120,7 +120,14 @@ enum Commands {
 }
 
 fn resolve_provider(config: &Config) -> anyhow::Result<Box<dyn Provider>> {
-    match config.provider.to_lowercase().as_str() {
+    let provider = config.provider.trim().to_lowercase();
+    if provider.is_empty() {
+        anyhow::bail!(
+            "No provider configured. Set `providers` in ~/.config/rai/config.toml or run `rai config`."
+        );
+    }
+
+    match provider.as_str() {
         "poe" => Ok(Box::new(providers::poe::PoeProvider::new(&config.api_key))),
         other => anyhow::bail!("Provider '{}' is not yet supported. Supported: poe", other),
     }
@@ -513,10 +520,8 @@ async fn handle_plan(
     };
 
     let section = parsed.get_section(subtask_opt)?;
-    let all_args = template::collect_all_args(
-        &parsed.global_frontmatter.args,
-        &section.frontmatter.args,
-    );
+    let all_args =
+        template::collect_all_args(&parsed.global_frontmatter.args, &section.frontmatter.args);
     let vars = template::find_variables(&section.content);
 
     let effective_args = if all_args.is_empty() && !vars.is_empty() {
@@ -529,9 +534,7 @@ async fn handle_plan(
 
     for var in &vars {
         if !mapped.contains_key(var) {
-            let value: String = Input::new()
-                .with_prompt(var)
-                .interact_text()?;
+            let value: String = Input::new().with_prompt(var).interact_text()?;
             mapped.insert(var.clone(), value);
         }
     }
@@ -660,6 +663,8 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
             config.provider = provider.clone();
+            config.providers = vec![provider.clone()];
+            config.default_provider = Some(provider.clone());
 
             let api_key: String = Input::new()
                 .with_prompt("API Key (saved to system keyring)")
@@ -720,8 +725,7 @@ async fn main() -> anyhow::Result<()> {
         }
         None => {
             if let Some(task) = &cli.task {
-                let (subtask, clean_args) =
-                    extract_subtask_from_args(None, &cli.args);
+                let (subtask, clean_args) = extract_subtask_from_args(None, &cli.args);
                 smart_execute(
                     task,
                     subtask.as_deref(),
