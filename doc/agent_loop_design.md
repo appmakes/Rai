@@ -38,8 +38,9 @@ User: "weather in shanghai"
 │     └─ tool_call("shell",           │
 │         {"cmd": "curl ..."})        │
 │                                     │
-│  3. Safeguard check                 │
-│     → Approve / Reject / Modify     │
+│  3. Safeguard check (two layers)    │
+│     → Global blocklist              │
+│     → Per-tool permission           │
 │                                     │
 │  4. Execute tool, capture output    │
 │                                     │
@@ -55,19 +56,19 @@ User: "weather in shanghai"
 
 Rai ships with a small set of built-in tools that the AI can invoke:
 
-| Tool | Description | Risk Level |
-|------|-------------|------------|
-| `shell` | Execute a shell command and return stdout/stderr | **High** |
-| `read_file` | Read a file's contents | Medium |
-| `write_file` | Write content to a file | **High** |
-| `list_dir` | List files in a directory | Low |
-| `http_get` | Fetch a URL and return the body | Medium |
+| Tool | Description | Default Permission |
+|------|-------------|--------------------|
+| `shell` | Execute a shell command and return stdout/stderr | `ask` |
+| `read_file` | Read a file's contents | `allow` |
+| `write_file` | Write content to a file | `ask` |
+| `list_dir` | List files in a directory | `allow` |
+| `http_get` | Fetch a URL and return the body | `allow` |
 
 Each tool has a JSON schema describing its parameters, which is sent to the AI provider as part of the tool definition.
 
 ### 3.2 User-Defined Tools (Tool Registry)
 
-Users can define custom tools in `~/.config/rai/tools.toml` or in the task file frontmatter:
+Users can define custom tools in `~/.config/rai/tools.toml` or in the task file frontmatter.
 
 **Global tools (`~/.config/rai/tools.toml`):**
 ```toml
@@ -76,30 +77,21 @@ name = "weather"
 description = "Get current weather for a city"
 command = "curl -s 'wttr.in/{city}?format=j1'"
 params = ["city"]
-risk = "low"
+permission = "allow"
 
 [[tools]]
 name = "git_log"
 description = "Get recent git commits"
 command = "git log --oneline -n {count}"
 params = ["count"]
-risk = "low"
-```
+permission = "allow"
 
-**Task-scoped tools (in `task.md` frontmatter):**
-```markdown
----
-model: gpt-4o
-tools:
-  - name: test_runner
-    description: "Run project tests"
-    command: "cargo test {test_name}"
-    params: ["test_name"]
-    risk: low
----
-
-# Fix Failing Test
-Find and fix the failing test. Use the test_runner tool to verify your fix.
+[[tools]]
+name = "deploy"
+description = "Deploy to production"
+command = "scripts/deploy.sh {env}"
+params = ["env"]
+permission = "ask"
 ```
 
 ### 3.3 Tool Call Protocol
@@ -112,177 +104,319 @@ Rai uses the AI provider's native tool/function calling API:
 
 When the provider doesn't support native tool calling, rai falls back to a **prompt-based approach**: the system prompt describes the tools in text, and rai parses structured tool-call blocks from the AI's text response (e.g., ` ```tool:shell ... ``` `).
 
-## 4. Safeguard System
+## 4. Permission System
 
-Executing AI-requested commands is inherently dangerous. The safeguard system is the most critical part of this design.
+### 4.1 Design Principle
 
-### 4.1 Risk Classification
+The old design used `risk` levels (low / medium / high) which describe *what a tool is*. The new design uses `permission` which describes *what rai should do*. No translation table needed — the permission **is** the policy.
 
-Every tool invocation is classified into one of three risk levels:
+### 4.2 Permission Levels
 
-| Level | Description | Default Policy |
-|-------|-------------|----------------|
-| **Low** | Read-only, no side effects (e.g., `read_file`, `list_dir`, `http_get`) | Auto-approve |
-| **Medium** | Potentially revealing (e.g., reading sensitive files, network calls to unknown hosts) | Auto-approve with logging |
-| **High** | Side effects possible (e.g., `shell`, `write_file`) | **Require explicit approval** |
+Each tool has a `permission` field with one of six values, ordered from most permissive to most restrictive:
 
-### 4.2 Approval Modes
-
-Controlled via CLI flag or config:
-
-```bash
-# Default: prompt for high-risk, auto-approve low/medium
-rai "weather in shanghai"
-
-# Auto-approve everything (for CI/CD or trusted tasks)
-rai --yes "weather in shanghai"
-rai --auto-approve "weather in shanghai"
-
-# Approve every single tool call regardless of risk
-rai --approve-all "weather in shanghai"
-
-# Disable all tool calling (single-turn only)
-rai --no-tools "weather in shanghai"
+```
+  allow                     Most permissive
+    │                       Auto-approve everything.
+    ▼
+  blacklist: <patterns>
+    │                       Auto-approve, UNLESS the resolved
+    │                       command matches a pattern → deny.
+    ▼
+  ask_once
+    │                       Ask the user on the first invocation.
+    │                       Remember the answer for this session.
+    ▼
+  ask
+    │                       Ask the user every time.
+    ▼
+  whitelist: <patterns>
+    │                       Deny by default, UNLESS the resolved
+    │                       command matches a pattern → allow.
+    ▼
+  deny                      Most restrictive
+                            Always reject. Tool is disabled.
 ```
 
-**Interactive approval prompt:**
+**Examples:**
+```toml
+# Auto-approve all invocations
+[[tools]]
+name = "read_file"
+permission = "allow"
+
+# Allow shell, but block destructive patterns
+[[tools]]
+name = "shell"
+permission = 'blacklist: rm\s+-rf|mkfs|dd\s+if=|shutdown|reboot'
+
+# Ask the first time, then remember
+[[tools]]
+name = "http_get"
+permission = "ask_once"
+
+# Ask every single time
+[[tools]]
+name = "write_file"
+permission = "ask"
+
+# Only allow curl and wget commands through shell
+[[tools]]
+name = "shell"
+permission = "whitelist: ^curl\\s|^wget\\s"
+
+# Completely disabled
+[[tools]]
+name = "write_file"
+permission = "deny"
+```
+
+### 4.3 Pattern Matching
+
+`blacklist` and `whitelist` patterns are regex and match against the **fully resolved command/argument string**. What constitutes the match target depends on the tool:
+
+| Tool | Pattern matches against | Example |
+|------|------------------------|---------|
+| `shell` | The full command string | `rm -rf /tmp/data` |
+| `read_file` | The file path | `/etc/passwd` |
+| `write_file` | The file path | `src/main.rs` |
+| `list_dir` | The directory path | `/home/user` |
+| `http_get` | The full URL | `https://evil.com/steal` |
+| User-defined | The interpolated `command` string | `curl -s 'wttr.in/Shanghai'` |
+
+Multiple patterns are separated by `|` (regex alternation) or specified as a list:
+
+```toml
+# Single-line with alternation
+permission = 'blacklist: rm\s+-rf|mkfs|shutdown'
+
+# Multi-pattern list (TOML array syntax)
+permission = ["blacklist", 'rm\s+-rf', 'mkfs', 'shutdown']
+```
+
+## 5. Two-Layer Safeguard Architecture
+
+Every tool call passes through **two independent layers**. Both must approve for execution to proceed.
+
+```
+Tool Call from AI
+       │
+       ▼
+┌──────────────────────────────────────┐
+│  Layer 1: Global Blocklist           │
+│                                      │
+│  Unconditional. Not overridable.     │
+│  Applies to ALL tools, ALL modes.    │
+│  Even --yes cannot bypass this.      │
+│                                      │
+│  Match? → DENY (always)             │
+│  No match? → pass to Layer 2        │
+└──────────────┬───────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────┐
+│  Layer 2: Per-Tool Permission        │
+│                                      │
+│  allow      → execute                │
+│  blacklist  → check pattern          │
+│  ask_once   → prompt (or recall)     │
+│  ask        → prompt                 │
+│  whitelist  → check pattern          │
+│  deny       → reject                 │
+└──────────────────────────────────────┘
+```
+
+### 5.1 Layer 1: Global Blocklist
+
+A hardcoded + user-extensible set of patterns that are **always denied**, regardless of per-tool permissions, `--yes` flags, or any other setting. This is the nuclear safety net.
+
+**Built-in (hardcoded, cannot be removed):**
+```
+rm\s+-rf\s+/[^.]       # rm -rf / (but not rm -rf ./local)
+mkfs\.
+dd\s+if=.*of=/dev/
+:()\{.*\|.*&\s*\};     # fork bomb
+>\s*/dev/sd
+chmod\s+-R\s+777\s+/
+```
+
+**User-extensible in config:**
+```toml
+# ~/.config/rai/config.toml
+[safety]
+blocked_patterns = [
+    'DROP\s+TABLE',
+    'DELETE\s+FROM.*WHERE\s+1',
+    'curl.*\|\s*bash',
+    'eval\s*\(',
+]
+```
+
+### 5.2 Layer 2: Per-Tool Permission
+
+Resolved from the tool's `permission` field. See §4.2.
+
+### 5.3 Interactive Approval Prompt
+
+When permission requires user input (`ask` or `ask_once`):
+
 ```
 [rai] AI wants to execute:
 
   shell: curl -s 'wttr.in/Shanghai?format=j1'
 
-  Risk: low (read-only HTTP request)
-
-  [A]pprove  [R]eject  [E]dit  [A]pprove all remaining  → 
+  [Y]es  [N]o  [E]dit  [A]lways  → 
 ```
 
-The user can:
-- **Approve**: Execute as-is
-- **Reject**: Skip this tool call, tell the AI it was denied
-- **Edit**: Modify the command before execution, then approve
-- **Approve all**: Stop asking for the rest of this session
+Options:
+- **Yes**: Execute this call
+- **No**: Reject this call, tell AI it was denied
+- **Edit**: Modify the command, then execute the edited version
+- **Always**: Switch this tool to `allow` for the rest of the session
 
-### 4.3 Command Blocklist
+## 6. Task-Level Permission Overrides
 
-A built-in blocklist prevents catastrophic commands from ever executing, even with `--yes`:
+Task files (`task.md`) can reference tools in their frontmatter for two purposes:
+
+1. **Add new tools** scoped to this task
+2. **Restrict existing tools** by tightening their permission
+
+### 6.1 Restriction Rule
+
+A task file can only move a tool's permission **down** (more restrictive), never **up**:
 
 ```
-# Never executed, regardless of approval mode
-rm -rf /
-mkfs.*
-dd if=.* of=/dev/.*
-:(){ :|:& };:
-shutdown
-reboot
-> /dev/sda
-chmod -R 777 /
+allow → blacklist → ask_once → ask → whitelist → deny
+                    ◄── task can move this direction only
 ```
 
-The blocklist is pattern-based (regex) and can be extended by the user in config:
+If a task tries to relax a permission (e.g., global is `ask`, task says `allow`), the task override is **ignored** and rai logs a warning.
+
+### 6.2 Pattern Merging
+
+When a task modifies a `blacklist` or `whitelist` tool:
+
+- **Blacklist**: task patterns are **added** to the global patterns (union). The task makes the blacklist stricter.
+- **Whitelist**: task patterns are **intersected** with the global patterns. The task can only narrow what's allowed, never expand.
+
+**Example:**
 
 ```toml
-# ~/.config/rai/config.toml
-[safety]
-blocked_patterns = [
-    "rm\\s+-rf\\s+/",
-    "DROP\\s+TABLE",
-    "DELETE\\s+FROM.*WHERE\\s+1",
-]
+# ~/.config/rai/tools.toml — global
+[[tools]]
+name = "shell"
+permission = 'blacklist: rm|shutdown'
 ```
 
-### 4.4 Sandboxing Options
-
-For maximum safety, rai can restrict tool execution:
-
-1. **Working directory jail**: Tools can only access files within the current working directory (or a configured root). Paths outside are rejected.
-
-2. **Command allowlist mode**: Instead of a blocklist, only explicitly allowed commands can run:
-   ```toml
-   [safety]
-   mode = "allowlist"   # "blocklist" (default) or "allowlist"
-   allowed_commands = ["curl", "cat", "ls", "grep", "jq", "git"]
-   ```
-
-3. **Network restrictions**: Optionally limit HTTP tools to specific domains:
-   ```toml
-   [safety]
-   allowed_domains = ["wttr.in", "api.github.com", "httpbin.org"]
-   ```
-
-4. **Read-only mode**: Disable `write_file` and restrict `shell` to read-only commands:
-   ```bash
-   rai --read-only "analyze my project structure"
-   ```
-
-### 4.5 Iteration Limits
-
-Prevent runaway agent loops:
-
-```toml
-[agent]
-max_iterations = 10      # Max tool-call round-trips per session
-max_execution_time = 120  # Seconds before the loop is killed
-max_output_size = 65536   # Max bytes of tool output fed back to AI
+```yaml
+# task.md — task-level override
+---
+tools:
+  - name: shell
+    permission: "blacklist: curl|wget"
+---
 ```
 
-When a limit is hit, rai stops the loop and prints what it has so far.
+**Effective permission for this task:**
+`blacklist: rm|shutdown|curl|wget`
 
-### 4.6 Audit Log
+The task added `curl|wget` to the existing blocklist. It did not remove `rm|shutdown`.
 
-Every tool execution is logged to `~/.local/share/rai/audit.log`:
+### 6.3 Adding New Tools
 
-```jsonl
-{"ts":"2026-02-28T10:30:00Z","tool":"shell","cmd":"curl -s wttr.in/Shanghai","approved":"auto","risk":"low","exit_code":0,"duration_ms":450}
-{"ts":"2026-02-28T10:30:01Z","tool":"shell","cmd":"rm -rf /tmp/test","approved":"rejected","risk":"high","reason":"user_denied"}
+Tasks can define tools that don't exist globally. These are available only during that task's execution and can have any permission level:
+
+```yaml
+---
+model: gpt-4o
+agent: true
+tools:
+  - name: run_tests
+    description: "Run the test suite"
+    command: "cargo test 2>&1"
+    permission: allow
+  - name: read_source
+    description: "Read a source file"
+    command: "cat {filepath}"
+    params: ["filepath"]
+    permission: allow
+max_iterations: 5
+---
+
+# Debug Test Failure
+The test `test_parse_subtask_frontmatter` is failing.
+Investigate the cause and suggest a fix.
 ```
 
-This provides a complete trace of what the AI asked for and what was actually executed.
+### 6.4 Denying Tools
 
-## 5. Agent Loop Data Flow
+A task can disable a globally available tool:
+
+```yaml
+---
+tools:
+  - name: write_file
+    permission: deny
+  - name: shell
+    permission: "whitelist: ^cat\\s|^ls\\s|^grep\\s"
+---
+
+# Code Review
+Review this codebase. Read files as needed. Do not modify anything.
+```
+
+This restricts the task to read-only operations even if the global config allows writes.
+
+## 7. Agent Loop Data Flow
 
 ```
 User Prompt
     │
     ▼
-┌────────────────────┐
-│ Build Messages:    │
-│ - system prompt    │
-│ - tool definitions │
-│ - user prompt      │
-└────────┬───────────┘
-         │
-    ┌────▼────┐
-    │ AI Call │◄─────────────────────────┐
-    └────┬────┘                          │
-         │                               │
-    ┌────▼──────────────┐                │
-    │ Response Type?    │                │
-    ├───────────────────┤                │
-    │ text → print,done │                │
-    │ tool_call ────────┼──┐             │
-    └───────────────────┘  │             │
-                           ▼             │
-                  ┌─────────────────┐    │
-                  │ Safeguard Check │    │
-                  ├─────────────────┤    │
-                  │ blocked → deny  │    │
-                  │ low risk → auto │    │
-                  │ high risk → ask │    │
-                  └────────┬────────┘    │
-                           │             │
-                  ┌────────▼────────┐    │
-                  │ Execute Tool    │    │
-                  │ capture output  │    │
-                  └────────┬────────┘    │
-                           │             │
-                  ┌────────▼────────┐    │
-                  │ Append tool     │    │
-                  │ result to       │────┘
-                  │ conversation    │
-                  └─────────────────┘
+┌────────────────────────────┐
+│ Build Messages:            │
+│ - system prompt            │
+│ - tool definitions         │
+│   (global + task, merged)  │
+│ - user prompt              │
+└────────────┬───────────────┘
+             │
+        ┌────▼────┐
+        │ AI Call │◄──────────────────────────────┐
+        └────┬────┘                               │
+             │                                    │
+        ┌────▼──────────────┐                     │
+        │ Response Type?    │                     │
+        ├───────────────────┤                     │
+        │ text → print,done │                     │
+        │ tool_call ────────┼───┐                 │
+        └───────────────────┘   │                 │
+                                ▼                 │
+                   ┌────────────────────┐         │
+                   │ Layer 1:           │         │
+                   │ Global Blocklist   │         │
+                   │ Match? → DENY      │         │
+                   └─────────┬──────────┘         │
+                             │ pass               │
+                             ▼                    │
+                   ┌────────────────────┐         │
+                   │ Layer 2:           │         │
+                   │ Per-Tool Permission│         │
+                   │ allow/ask/deny/... │         │
+                   └─────────┬──────────┘         │
+                             │ approved           │
+                             ▼                    │
+                   ┌────────────────────┐         │
+                   │ Execute Tool       │         │
+                   │ capture output     │         │
+                   └─────────┬──────────┘         │
+                             │                    │
+                   ┌─────────▼──────────┐         │
+                   │ Append tool result │─────────┘
+                   │ to conversation    │
+                   └────────────────────┘
 ```
 
-## 6. System Prompt Design
+## 8. System Prompt Design
 
 The agent loop prepends a system prompt that defines the AI's behavior:
 
@@ -304,38 +438,14 @@ Environment:
 - Working directory: {cwd}
 ```
 
-The system prompt is configurable in `~/.config/rai/config.toml`:
+The system prompt is configurable:
 ```toml
+# ~/.config/rai/config.toml
 [agent]
 system_prompt_file = "~/.config/rai/system_prompt.md"  # Optional override
 ```
 
-## 7. Task File Integration
-
-The agent loop integrates with `task.md` files. A task can opt into agent mode and define task-specific tools:
-
-```markdown
----
-model: gpt-4o
-agent: true
-tools:
-  - name: run_tests
-    description: "Run the test suite"
-    command: "cargo test 2>&1"
-    risk: low
-  - name: read_source
-    description: "Read a source file"
-    command: "cat {filepath}"
-    params: ["filepath"]
-    risk: low
-max_iterations: 5
----
-
-# Debug Test Failure
-The test `test_parse_subtask_frontmatter` is failing.
-Investigate the cause and suggest a fix.
-Use `run_tests` to see the current failure and `read_source` to examine the code.
-```
+## 9. Task File Integration
 
 **Non-agent task files** (default) continue to work exactly as before — single-turn, no tools. The `agent: true` flag is opt-in.
 
@@ -344,21 +454,74 @@ Use `run_tests` to see the current failure and `read_source` to examine the code
 rai --no-tools "just answer from your knowledge"
 ```
 
-## 8. CI/CD Considerations
+## 10. CLI Flags
 
-In non-interactive environments (CI=1 or non-TTY):
+```bash
+# Default: tools enabled, permissions as configured
+rai "weather in shanghai"
 
-- `--yes` must be explicitly passed to allow tool execution
-- Without `--yes`, tool calls are **rejected** with an explanation
+# Auto-approve all tool calls (skips ask/ask_once prompts)
+# Global blocklist still enforced
+rai --yes "weather in shanghai"
+
+# Prompt for every tool call, regardless of permission level
+rai --ask-all "do something complex"
+
+# Disable all tool calling (single-turn only)
+rai --no-tools "just answer from your knowledge"
+
+# Read-only mode: deny write_file, restrict shell
+rai --read-only "analyze my project structure"
+```
+
+| Flag | Effect |
+|------|--------|
+| `--yes` | Treat `ask` and `ask_once` as `allow`. Global blocklist still enforced. |
+| `--ask-all` | Treat every tool as `ask`. Override `allow` to require confirmation. |
+| `--no-tools` | Disable agent loop entirely. Single-turn mode. |
+| `--read-only` | Set `write_file` to `deny`, restrict `shell` to read-only patterns. |
+
+## 11. CI/CD Considerations
+
+In non-interactive environments (`CI=1` or non-TTY):
+
+- Tools with `ask` or `ask_once` permission are **auto-denied** unless `--yes` is passed
+- `--yes` must be explicitly provided to allow tool execution
 - The audit log is always written
-- `max_iterations` and `max_execution_time` are enforced strictly
+- Iteration limits are enforced strictly
 
 ```bash
 # CI pipeline example
 RAI_API_KEY=$KEY rai --yes --read-only "summarize recent git changes"
 ```
 
-## 9. Provider Trait Extension
+## 12. Iteration Limits
+
+Prevent runaway agent loops:
+
+```toml
+# ~/.config/rai/config.toml
+[agent]
+max_iterations = 10      # Max tool-call round-trips per session
+max_execution_time = 120  # Seconds before the loop is killed
+max_output_size = 65536   # Max bytes of tool output fed back to AI
+```
+
+When a limit is hit, rai stops the loop and presents whatever the AI has produced so far.
+
+## 13. Audit Log
+
+Every tool execution is logged to `~/.local/share/rai/audit.log`:
+
+```jsonl
+{"ts":"2026-02-28T10:30:00Z","tool":"shell","cmd":"curl -s wttr.in/Shanghai","permission":"allow","decision":"approved","exit_code":0,"duration_ms":450}
+{"ts":"2026-02-28T10:30:01Z","tool":"shell","cmd":"rm -rf /tmp/test","permission":"ask","decision":"user_denied"}
+{"ts":"2026-02-28T10:30:02Z","tool":"shell","cmd":"rm -rf /","permission":"allow","decision":"global_blocklist","matched_pattern":"rm\\s+-rf\\s+/"}
+```
+
+The third entry shows the global blocklist overriding a tool-level `allow` — the audit trail makes this visible.
+
+## 14. Provider Trait Extension
 
 The `Provider` trait gains a new method for tool-calling:
 
@@ -391,13 +554,15 @@ pub struct ToolCall {
 
 Providers that don't support native tool calling return `ProviderResponse::Text` always, and the agent loop handles the prompt-based fallback.
 
-## 10. Example Session
+## 15. Example Sessions
+
+### Weather query (tools auto-approved)
 
 ```
 $ rai "what's the weather in Shanghai and Tokyo? compare them"
 
-[rai] Calling tool: shell → curl -s 'wttr.in/Shanghai?format=j1' (auto-approved, low risk)
-[rai] Calling tool: shell → curl -s 'wttr.in/Tokyo?format=j1' (auto-approved, low risk)
+[rai] shell: curl -s 'wttr.in/Shanghai?format=j1'  ✓
+[rai] shell: curl -s 'wttr.in/Tokyo?format=j1'  ✓
 
 Weather Comparison:
 
@@ -410,30 +575,20 @@ Shanghai is warmer and drier. Tokyo has cloud cover with
 a chance of rain later today. Pack an umbrella for Tokyo.
 ```
 
-```
-$ rai "find the largest file in this project"
-
-[rai] Calling tool: shell → find . -type f -exec du -b {} + | sort -rn | head -5
-      (auto-approved, low risk)
-
-The largest files in your project:
-1. target/release/rai — 12.4 MB (release binary)
-2. target/debug/rai — 48.2 MB (debug binary)
-3. Cargo.lock — 42 KB
-```
+### Dangerous command (permission = ask, user rejects)
 
 ```
 $ rai "delete all .tmp files in /home"
 
 [rai] AI wants to execute:
-  shell: find /home -name "*.tmp" -delete
-  Risk: HIGH (destructive file operation outside working directory)
 
-  [A]pprove  [R]eject  [E]dit  [A]pprove all → r
+  shell: find /home -name "*.tmp" -delete
+
+  [Y]es  [N]o  [E]dit  [A]lways  → n
 
 [rai] Tool call rejected.
 
-I understand the command was rejected for safety. Here's what I was going to do:
+I understand the command was rejected. Here's what I was going to do:
 - Find all .tmp files under /home and delete them.
 
 If you'd like to proceed, you can run it manually:
@@ -443,26 +598,74 @@ Or run a dry-run first to see what would be deleted:
   find /home -name "*.tmp" -print
 ```
 
-## 11. Implementation Phases
+### Global blocklist stops catastrophic command
+
+```
+$ rai --yes "clean up everything, start fresh"
+
+[rai] shell: rm -rf /  ✗ (blocked by global safety rule)
+
+I attempted to run `rm -rf /` but it was blocked by a safety rule.
+This command would delete your entire filesystem. I cannot execute it
+under any circumstances.
+
+If you want to clean up specific directories, tell me which ones
+and I'll suggest safer alternatives.
+```
+
+### Task file with restricted tools
+
+```yaml
+# review.md
+---
+agent: true
+tools:
+  - name: shell
+    permission: "whitelist: ^cat\\s|^wc\\s|^grep\\s"
+  - name: write_file
+    permission: deny
+---
+# Code Review
+Review the source files in src/ for potential bugs.
+```
+
+```
+$ rai review.md
+
+[rai] shell: cat src/main.rs  ✓
+[rai] shell: cat src/config.rs  ✓
+[rai] shell: grep -rn "unwrap()" src/  ✓
+[rai] shell: python3 -c "..."  ✗ (not in whitelist)
+
+Found 3 potential issues:
+1. ...
+```
+
+## 16. Implementation Phases
 
 | Phase | Scope | Depends On |
 |-------|-------|------------|
 | C.1 | Provider trait extension (`chat_with_tools`), `ProviderResponse` types | — |
-| C.2 | Agent loop core: iteration, tool dispatch, conversation management | C.1 |
-| C.3 | Built-in tools: `shell`, `read_file`, `list_dir`, `http_get` | C.2 |
-| C.4 | Safeguard system: risk classification, approval prompt, blocklist | C.3 |
-| C.5 | User-defined tools: `tools.toml`, task-file `tools:` frontmatter | C.4 |
-| C.6 | Audit logging, iteration limits, sandboxing options | C.4 |
-| C.7 | CI/CD mode, `--yes`, `--no-tools`, `--read-only` flags | C.6 |
+| C.2 | Permission system: parsing, resolution, two-layer check | — |
+| C.3 | Agent loop core: iteration, tool dispatch, conversation management | C.1, C.2 |
+| C.4 | Built-in tools: `shell`, `read_file`, `write_file`, `list_dir`, `http_get` | C.3 |
+| C.5 | Interactive approval prompt (Yes/No/Edit/Always) | C.3 |
+| C.6 | User-defined tools: `tools.toml` parsing, task-file tool merging | C.4 |
+| C.7 | Task-level overrides: restriction enforcement, pattern merging | C.6 |
+| C.8 | Audit logging, iteration limits | C.3 |
+| C.9 | CLI flags: `--yes`, `--ask-all`, `--no-tools`, `--read-only` | C.5 |
+| C.10 | CI/CD mode: auto-deny without `--yes` | C.9 |
 
-## 12. Open Questions
+## 17. Open Questions
 
-1. **Output truncation**: When a tool returns a very large output (e.g., `cat` on a big file), how aggressively should we truncate? Fixed byte limit? Let the model ask for specific ranges?
+1. **Output truncation**: When a tool returns very large output (e.g., `cat` on a big file), how aggressively should we truncate? Fixed byte limit? Let the model ask for specific line ranges?
 
 2. **Streaming**: Should tool results be streamed to the terminal as they come in, or only shown after the AI processes them?
 
-3. **Cost control**: Agent loops can consume many tokens (each round-trip sends the full conversation). Should rai track token usage and warn/stop at a threshold?
+3. **Cost control**: Agent loops consume many tokens (each round-trip sends the full conversation). Should rai track token usage and warn/stop at a threshold?
 
-4. **Concurrent tool calls**: Some providers return multiple tool calls at once. Should rai execute them in parallel or sequentially?
+4. **Concurrent tool calls**: Some providers return multiple tool calls at once. Should rai execute them in parallel or sequentially? Parallel is faster, but sequential is easier to audit and approve.
 
-5. **Stateful tools**: Should tools be able to maintain state across calls? (e.g., a database connection tool that opens once and queries multiple times)
+5. **`ask_once` scope**: Should `ask_once` memory be per-tool or per-tool-per-arguments? If I approve `shell: curl` once, does that also approve `shell: rm`?
+
+6. **Permission inheritance for user-defined tools**: If a user defines a tool with `command = "curl ..."`, should it inherit the `shell` tool's permission, or start fresh?
