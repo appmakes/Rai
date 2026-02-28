@@ -1,10 +1,11 @@
+use anyhow::Context;
 use clap::{Parser, Subcommand};
+use config::Config;
+use dialoguer::{Confirm, Input, Select};
+use std::io::Read;
+use std::path::Path;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
-use dialoguer::{Input, Select, Confirm};
-use config::Config;
-use anyhow::Context;
-use std::path::Path;
 
 mod config;
 mod key_store;
@@ -30,6 +31,7 @@ fn is_interactive() -> bool {
 #[command(name = "rai")]
 #[command(version)]
 #[command(about = "A CLI tool to run AI tasks in terminal or CI/CD", long_about = None)]
+#[command(args_conflicts_with_subcommands = true)]
 struct Cli {
     /// Turn debugging information on
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -38,6 +40,13 @@ struct Cli {
     /// Override the AI model to use (e.g., gpt-4o, kimi-k2)
     #[arg(short, long)]
     model: Option<String>,
+
+    /// Task description or file path (shorthand for `rai run`)
+    task: Option<String>,
+
+    /// Arguments for the task (including #subtask selector)
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    args: Vec<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -75,11 +84,76 @@ enum Commands {
 fn resolve_provider(config: &Config) -> anyhow::Result<Box<dyn Provider>> {
     match config.provider.to_lowercase().as_str() {
         "poe" => Ok(Box::new(providers::poe::PoeProvider::new(&config.api_key))),
-        other => anyhow::bail!(
-            "Provider '{}' is not yet supported. Supported: poe",
-            other
-        ),
+        other => anyhow::bail!("Provider '{}' is not yet supported. Supported: poe", other),
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PipedStdin {
+    NotPiped,
+    Empty,
+    Content(String),
+}
+
+fn read_piped_stdin() -> anyhow::Result<PipedStdin> {
+    if atty::is(atty::Stream::Stdin) {
+        return Ok(PipedStdin::NotPiped);
+    }
+
+    let mut stdin_content = String::new();
+    std::io::stdin()
+        .read_to_string(&mut stdin_content)
+        .context("Failed to read piped stdin")?;
+
+    if stdin_content.trim().is_empty() {
+        Ok(PipedStdin::Empty)
+    } else {
+        Ok(PipedStdin::Content(stdin_content))
+    }
+}
+
+fn ensure_non_empty_piped_stdin(piped_stdin: &PipedStdin) -> anyhow::Result<()> {
+    if matches!(piped_stdin, PipedStdin::Empty) {
+        anyhow::bail!(
+            "Piped content is empty.\n\
+No stdin text was received from the previous command.\n\
+Suggestions:\n\
+  1. Quote or escape special URL characters such as '&'.\n\
+  2. Follow redirects when fetching web pages (`curl -L` or `curl -Ls`).\n\
+  3. Verify stdin size before piping (`... | wc -c`)."
+        );
+    }
+
+    Ok(())
+}
+
+fn compose_adhoc_prompt(task: &str, piped_stdin: Option<&str>) -> String {
+    match piped_stdin {
+        Some(stdin) if !stdin.trim().is_empty() => {
+            format!("{}\n\n{}", task, stdin.trim_end())
+        }
+        _ => task.to_string(),
+    }
+}
+
+fn parse_shorthand_args(raw_args: &[String]) -> (Option<String>, Vec<String>) {
+    let mut subtask: Option<String> = None;
+    let mut args: Vec<String> = Vec::new();
+
+    if let Some(first) = raw_args.first() {
+        if let Some(stripped) = first.strip_prefix('#') {
+            if !stripped.is_empty() {
+                subtask = Some(stripped.to_string());
+            } else {
+                args.push(first.clone());
+            }
+        } else {
+            args.push(first.clone());
+        }
+    }
+
+    args.extend(raw_args.iter().skip(1).cloned());
+    (subtask, args)
 }
 
 async fn handle_run(
@@ -88,6 +162,18 @@ async fn handle_run(
     args: &[String],
     model_override: Option<&str>,
 ) -> anyhow::Result<()> {
+    let task_path = Path::new(task);
+    let is_file = task_path.exists() && task_path.is_file();
+    let piped_stdin = if is_file {
+        PipedStdin::NotPiped
+    } else {
+        read_piped_stdin()?
+    };
+
+    if !is_file && std::env::var("CI").is_err() {
+        ensure_non_empty_piped_stdin(&piped_stdin)?;
+    }
+
     let mut config = Config::load()?;
     config.resolve_api_key()?;
 
@@ -97,17 +183,12 @@ async fn handle_run(
         );
     }
 
-    let task_path = Path::new(task);
-    let is_file = task_path.exists() && task_path.is_file();
-
     let (prompt, model) = if is_file {
         let parsed = task_parser::parse_task_file(task_path)?;
         let section = parsed.get_section(subtask)?;
 
-        let declared_args = template::collect_all_args(
-            &parsed.global_frontmatter.args,
-            &section.frontmatter.args,
-        );
+        let declared_args =
+            template::collect_all_args(&parsed.global_frontmatter.args, &section.frontmatter.args);
 
         let vars_in_template = template::find_variables(&section.content);
 
@@ -157,7 +238,11 @@ async fn handle_run(
         let model = model_override
             .map(|s| s.to_string())
             .unwrap_or(config.default_model.clone());
-        (task.to_string(), model)
+        let piped_content = match &piped_stdin {
+            PipedStdin::Content(content) => Some(content.as_str()),
+            PipedStdin::NotPiped | PipedStdin::Empty => None,
+        };
+        (compose_adhoc_prompt(task, piped_content), model)
     };
 
     let provider_impl = resolve_provider(&config)?;
@@ -173,7 +258,10 @@ async fn handle_run(
 fn handle_create(filename: &str) -> anyhow::Result<()> {
     let path = Path::new(filename);
     if path.exists() {
-        anyhow::bail!("File '{}' already exists. Choose a different name.", filename);
+        anyhow::bail!(
+            "File '{}' already exists. Choose a different name.",
+            filename
+        );
     }
 
     if !is_interactive() {
@@ -283,10 +371,7 @@ fn handle_plan(task_file: &str) -> anyhow::Result<()> {
         println!("Temperature: {}", temp);
     }
     if !parsed.global_frontmatter.args.is_empty() {
-        println!(
-            "Global args: {}",
-            parsed.global_frontmatter.args.join(", ")
-        );
+        println!("Global args: {}", parsed.global_frontmatter.args.join(", "));
     }
     println!();
 
@@ -319,10 +404,7 @@ fn handle_plan(task_file: &str) -> anyhow::Result<()> {
                 print!(" (vars: {})", vars.join(", "));
             }
             if !section.frontmatter.args.is_empty() {
-                print!(
-                    " (args: {})",
-                    section.frontmatter.args.join(", ")
-                );
+                print!(" (args: {})", section.frontmatter.args.join(", "));
             }
             println!();
         }
@@ -330,7 +412,10 @@ fn handle_plan(task_file: &str) -> anyhow::Result<()> {
     }
 
     if !is_interactive() {
-        println!("Non-interactive mode: use `rai run {} --subtask <name> [args...]` to execute.", task_file);
+        println!(
+            "Non-interactive mode: use `rai run {} --subtask <name> [args...]` to execute.",
+            task_file
+        );
         return Ok(());
     }
 
@@ -380,9 +465,7 @@ fn handle_plan(task_file: &str) -> anyhow::Result<()> {
                 } else {
                     format!("{} (undeclared)", var)
                 };
-                let value: String = Input::new()
-                    .with_prompt(prompt_label)
-                    .interact_text()?;
+                let value: String = Input::new().with_prompt(prompt_label).interact_text()?;
                 variable_values.insert(var.clone(), value);
             }
 
@@ -440,12 +523,9 @@ async fn main() -> anyhow::Result<()> {
         _ => Level::TRACE,
     };
 
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .finish();
+    let subscriber = FmtSubscriber::builder().with_max_level(log_level).finish();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     if let Some(model) = cli.model.as_ref() {
         info!("Overriding model to: {}", model);
@@ -489,8 +569,7 @@ async fn main() -> anyhow::Result<()> {
                 .default(String::new())
                 .interact_text()?;
 
-            set_api_key_helper(&provider, &api_key)
-                .context("Failed to save API key to keyring")?;
+            set_api_key_helper(&provider, &api_key).context("Failed to save API key to keyring")?;
 
             let default_model: String = Input::new()
                 .with_prompt("Default Model")
@@ -510,13 +589,7 @@ async fn main() -> anyhow::Result<()> {
             subtask,
             args,
         }) => {
-            handle_run(
-                task,
-                subtask.as_deref(),
-                args,
-                cli.model.as_deref(),
-            )
-            .await?;
+            handle_run(task, subtask.as_deref(), args, cli.model.as_deref()).await?;
         }
         Some(Commands::Create { filename }) => {
             handle_create(filename)?;
@@ -525,10 +598,68 @@ async fn main() -> anyhow::Result<()> {
             handle_plan(task_file)?;
         }
         None => {
-            use clap::CommandFactory;
-            Cli::command().print_help()?;
+            if let Some(task) = cli.task.as_deref() {
+                let (subtask, args) = parse_shorthand_args(&cli.args);
+                handle_run(task, subtask.as_deref(), &args, cli.model.as_deref()).await?;
+            } else {
+                use clap::CommandFactory;
+                Cli::command().print_help()?;
+            }
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        compose_adhoc_prompt, ensure_non_empty_piped_stdin, parse_shorthand_args, PipedStdin,
+    };
+
+    #[test]
+    fn test_compose_adhoc_prompt_without_stdin() {
+        let prompt = compose_adhoc_prompt("Summarize this", None);
+        assert_eq!(prompt, "Summarize this");
+    }
+
+    #[test]
+    fn test_compose_adhoc_prompt_with_stdin() {
+        let prompt = compose_adhoc_prompt("Summarize this", Some("input text\n"));
+        assert_eq!(prompt, "Summarize this\n\ninput text");
+    }
+
+    #[test]
+    fn test_parse_shorthand_args_with_subtask() {
+        let raw = vec!["#security".to_string(), "file.rs".to_string()];
+        let (subtask, args) = parse_shorthand_args(&raw);
+
+        assert_eq!(subtask.as_deref(), Some("security"));
+        assert_eq!(args, vec!["file.rs".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_shorthand_args_without_subtask() {
+        let raw = vec!["file.rs".to_string(), "strict".to_string()];
+        let (subtask, args) = parse_shorthand_args(&raw);
+
+        assert!(subtask.is_none());
+        assert_eq!(args, raw);
+    }
+
+    #[test]
+    fn test_empty_piped_stdin_returns_helpful_error() {
+        let error = ensure_non_empty_piped_stdin(&PipedStdin::Empty).unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains("Piped content is empty"));
+        assert!(message.contains("Suggestions"));
+        assert!(message.contains("curl -L"));
+    }
+
+    #[test]
+    fn test_non_empty_piped_stdin_passes_validation() {
+        let result = ensure_non_empty_piped_stdin(&PipedStdin::Content("text".to_string()));
+        assert!(result.is_ok());
+    }
 }
