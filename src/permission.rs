@@ -1,7 +1,9 @@
+#[cfg(test)]
 use anyhow::Result;
 use regex::Regex;
 use std::fmt;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub enum Permission {
     Allow,
@@ -14,6 +16,7 @@ pub enum Permission {
 }
 
 impl Permission {
+    #[cfg(test)]
     pub fn parse(s: &str) -> Result<Self> {
         let trimmed = s.trim();
         match trimmed {
@@ -43,6 +46,7 @@ impl Permission {
         }
     }
 
+    #[cfg(test)]
     pub fn restrictiveness(&self) -> u8 {
         match self {
             Permission::Allow => 0,
@@ -54,6 +58,7 @@ impl Permission {
         }
     }
 
+    #[cfg(test)]
     pub fn is_more_restrictive_than(&self, other: &Permission) -> bool {
         self.restrictiveness() > other.restrictiveness()
     }
@@ -61,6 +66,7 @@ impl Permission {
     /// Merge a task-level override into this permission.
     /// Task can only tighten (more restrictive), never relax.
     /// Blacklist patterns are unioned, whitelist patterns are intersected.
+    #[cfg(test)]
     pub fn merge_override(&self, task_override: &Permission) -> Permission {
         if !task_override.is_more_restrictive_than(self) {
             match (self, task_override) {
@@ -176,10 +182,19 @@ mod tests {
 
     #[test]
     fn test_parse_permission() {
-        assert!(matches!(Permission::parse("allow").unwrap(), Permission::Allow));
-        assert!(matches!(Permission::parse("deny").unwrap(), Permission::Deny));
+        assert!(matches!(
+            Permission::parse("allow").unwrap(),
+            Permission::Allow
+        ));
+        assert!(matches!(
+            Permission::parse("deny").unwrap(),
+            Permission::Deny
+        ));
         assert!(matches!(Permission::parse("ask").unwrap(), Permission::Ask));
-        assert!(matches!(Permission::parse("ask_once").unwrap(), Permission::AskOnce));
+        assert!(matches!(
+            Permission::parse("ask_once").unwrap(),
+            Permission::AskOnce
+        ));
     }
 
     #[test]
@@ -213,17 +228,35 @@ mod tests {
     #[test]
     fn test_check_blacklist() {
         let perm = Permission::Blacklist(vec![r"rm\s+-rf".to_string(), "shutdown".to_string()]);
-        assert!(matches!(check_permission(&perm, "ls -la"), PermissionDecision::Allow));
-        assert!(matches!(check_permission(&perm, "rm -rf /tmp"), PermissionDecision::Deny(_)));
-        assert!(matches!(check_permission(&perm, "shutdown now"), PermissionDecision::Deny(_)));
+        assert!(matches!(
+            check_permission(&perm, "ls -la"),
+            PermissionDecision::Allow
+        ));
+        assert!(matches!(
+            check_permission(&perm, "rm -rf /tmp"),
+            PermissionDecision::Deny(_)
+        ));
+        assert!(matches!(
+            check_permission(&perm, "shutdown now"),
+            PermissionDecision::Deny(_)
+        ));
     }
 
     #[test]
     fn test_check_whitelist() {
         let perm = Permission::Whitelist(vec![r"^curl\s".to_string(), r"^wget\s".to_string()]);
-        assert!(matches!(check_permission(&perm, "curl -s example.com"), PermissionDecision::Allow));
-        assert!(matches!(check_permission(&perm, "wget example.com"), PermissionDecision::Allow));
-        assert!(matches!(check_permission(&perm, "rm -rf /"), PermissionDecision::Deny(_)));
+        assert!(matches!(
+            check_permission(&perm, "curl -s example.com"),
+            PermissionDecision::Allow
+        ));
+        assert!(matches!(
+            check_permission(&perm, "wget example.com"),
+            PermissionDecision::Allow
+        ));
+        assert!(matches!(
+            check_permission(&perm, "rm -rf /"),
+            PermissionDecision::Deny(_)
+        ));
     }
 
     #[test]

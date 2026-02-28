@@ -15,9 +15,6 @@ pub enum Message {
     User {
         content: String,
     },
-    Assistant {
-        content: String,
-    },
     AssistantToolCalls {
         content: Option<String>,
         tool_calls: Vec<ApiToolCall>,
@@ -122,12 +119,6 @@ impl Message {
         }
     }
 
-    pub fn assistant(content: &str) -> Self {
-        Message::Assistant {
-            content: content.to_string(),
-        }
-    }
-
     pub fn tool_result(tool_call_id: &str, content: &str) -> Self {
         Message::ToolResult {
             tool_call_id: tool_call_id.to_string(),
@@ -161,10 +152,6 @@ impl Message {
             }),
             Message::User { content } => serde_json::json!({
                 "role": "user",
-                "content": content,
-            }),
-            Message::Assistant { content } => serde_json::json!({
-                "role": "assistant",
                 "content": content,
             }),
             Message::AssistantToolCalls {

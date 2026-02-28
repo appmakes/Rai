@@ -38,3 +38,4 @@ Key commands:
 ### Workflow preference
 
 - When implementing code modifications or new features, always update related documentation in the same change.
+- After making code changes, ensure `cargo run` and `cargo build` complete without warnings.
