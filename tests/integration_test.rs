@@ -34,6 +34,7 @@ fn rai_bin() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_rai"));
     cmd.env("CI", "1");
     cmd.env("HOME", integration_test_home());
+    cmd.env("XDG_CONFIG_HOME", integration_test_home().join(".config"));
     cmd
 }
 
