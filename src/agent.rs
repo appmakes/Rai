@@ -58,13 +58,15 @@ impl Agent {
             .cloned()
             .collect();
 
-        let mut messages: Vec<Message> = vec![
-            Message::system(&system_prompt),
-            Message::user(prompt),
-        ];
+        let mut messages: Vec<Message> =
+            vec![Message::system(&system_prompt), Message::user(prompt)];
 
         for iteration in 0..self.config.max_iterations {
-            info!("Agent iteration {}/{}", iteration + 1, self.config.max_iterations);
+            info!(
+                "Agent iteration {}/{}",
+                iteration + 1,
+                self.config.max_iterations
+            );
 
             let response = self
                 .provider
@@ -87,7 +89,7 @@ impl Agent {
                             format!("[Tool call failed] {}", result.output)
                         };
 
-                        messages.push(Message::tool_result(&tc.id, &output));
+                        messages.push(Message::tool_result(&result.tool_call_id, &output));
                     }
                 }
             }
@@ -99,11 +101,11 @@ impl Agent {
         );
     }
 
-    fn handle_tool_call(
-        &mut self,
-        tc: &ToolCall,
-    ) -> Result<crate::tools::ToolResult> {
-        let tool_idx = self.tools.iter().position(|t| t.definition().name == tc.name);
+    fn handle_tool_call(&mut self, tc: &ToolCall) -> Result<crate::tools::ToolResult> {
+        let tool_idx = self
+            .tools
+            .iter()
+            .position(|t| t.definition().name == tc.name);
 
         let tool_idx = match tool_idx {
             Some(idx) => idx,
@@ -121,10 +123,7 @@ impl Agent {
 
         // Layer 1: Global blocklist
         if let Some(reason) = check_global_blocklist(&match_target, &self.config.blocked_patterns) {
-            eprintln!(
-                "[rai] {} → {}  ✗ ({})",
-                tc.name, match_target, reason
-            );
+            eprintln!("[rai] {} → {}  ✗ ({})", tc.name, match_target, reason);
             return Ok(crate::tools::ToolResult {
                 tool_call_id: tc.id.clone(),
                 output: format!("Blocked: {}", reason),
@@ -172,19 +171,14 @@ impl Agent {
                 }
             }
             PermissionDecision::Deny(reason) => {
-                eprintln!(
-                    "[rai] {}: {}  ✗ ({})",
-                    tc.name, match_target, reason
-                );
+                eprintln!("[rai] {}: {}  ✗ ({})", tc.name, match_target, reason);
                 Ok(crate::tools::ToolResult {
                     tool_call_id: tc.id.clone(),
                     output: format!("Denied: {}", reason),
                     success: false,
                 })
             }
-            PermissionDecision::NeedAsk => {
-                self.interactive_approve(tc, tool_idx)
-            }
+            PermissionDecision::NeedAsk => self.interactive_approve(tc, tool_idx),
         }
     }
 
@@ -220,7 +214,10 @@ impl Agent {
         match selection {
             Some(0) => {
                 // Yes
-                if matches!(self.tools[tool_idx].definition().permission, Permission::AskOnce) {
+                if matches!(
+                    self.tools[tool_idx].definition().permission,
+                    Permission::AskOnce
+                ) {
                     self.ask_once_memory.insert(tc.name.clone(), true);
                 }
                 eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
@@ -239,7 +236,10 @@ impl Agent {
             }
             Some(1) | None => {
                 // No
-                if matches!(self.tools[tool_idx].definition().permission, Permission::AskOnce) {
+                if matches!(
+                    self.tools[tool_idx].definition().permission,
+                    Permission::AskOnce
+                ) {
                     self.ask_once_memory.insert(tc.name.clone(), false);
                 }
                 eprintln!("[rai] {}: {}  ✗ (user denied)", tc.name, match_target);
@@ -266,8 +266,7 @@ impl Agent {
                     _ => edited_args["command"] = serde_json::Value::String(edited.clone()),
                 }
 
-                if let Some(reason) =
-                    check_global_blocklist(&edited, &self.config.blocked_patterns)
+                if let Some(reason) = check_global_blocklist(&edited, &self.config.blocked_patterns)
                 {
                     eprintln!("[rai] Edited command also blocked: {}", reason);
                     return Ok(crate::tools::ToolResult {

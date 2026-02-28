@@ -186,6 +186,7 @@ fn compose_adhoc_prompt(task: &str, piped_stdin: Option<&str>) -> String {
     }
 }
 
+#[cfg(test)]
 fn parse_shorthand_args(raw_args: &[String]) -> (Option<String>, Vec<String>) {
     let mut subtask: Option<String> = None;
     let mut args: Vec<String> = Vec::new();
