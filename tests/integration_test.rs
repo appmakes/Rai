@@ -6,6 +6,12 @@ fn rai_bin() -> Command {
     cmd
 }
 
+fn rai_bin_no_ci() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_rai"));
+    cmd.env_remove("CI");
+    cmd
+}
+
 #[test]
 fn test_help_output() {
     let output = rai_bin().arg("--help").output().unwrap();
@@ -81,7 +87,7 @@ fn test_shorthand_adhoc_no_api_key() {
 
 #[test]
 fn test_shorthand_adhoc_empty_piped_stdin_shows_suggestions() {
-    let output = rai_bin()
+    let output = rai_bin_no_ci()
         .args(["summarize this"])
         .env("RAI_API_KEY", "test")
         .stdin(Stdio::null())

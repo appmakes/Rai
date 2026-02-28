@@ -170,7 +170,7 @@ async fn handle_run(
         read_piped_stdin()?
     };
 
-    if !is_file {
+    if !is_file && std::env::var("CI").is_err() {
         ensure_non_empty_piped_stdin(&piped_stdin)?;
     }
 
