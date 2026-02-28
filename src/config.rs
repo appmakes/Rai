@@ -27,7 +27,7 @@ impl Config {
         
         // Ensure defaults if empty
         if config.provider.is_empty() {
-             config.provider = "openai".to_string();
+             config.provider = "poe".to_string();
         }
         if config.default_model.is_empty() {
              config.default_model = "gpt-4o".to_string();
