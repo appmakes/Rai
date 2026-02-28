@@ -6,11 +6,14 @@ use config::Config;
 use anyhow::Context;
 use std::path::Path;
 
+mod agent;
 mod config;
 mod key_store;
+mod permission;
 mod providers;
 mod task_parser;
 mod template;
+mod tools;
 
 use providers::Provider;
 
@@ -26,9 +29,6 @@ fn is_interactive() -> bool {
     atty::is(atty::Stream::Stdin) && std::env::var("CI").is_err()
 }
 
-/// Extract a `#subtask` selector from positional args.
-/// Returns (resolved_subtask, remaining_args).
-/// The explicit `--subtask` flag takes precedence if provided.
 fn extract_subtask_from_args(
     explicit_subtask: Option<&str>,
     args: &[String],
@@ -36,10 +36,8 @@ fn extract_subtask_from_args(
     if explicit_subtask.is_some() {
         return (explicit_subtask.map(|s| s.to_string()), args.to_vec());
     }
-
     let mut subtask = None;
     let mut clean_args = Vec::new();
-
     for arg in args {
         if subtask.is_none() && arg.starts_with('#') && arg.len() > 1 {
             subtask = Some(arg[1..].to_string());
@@ -47,7 +45,6 @@ fn extract_subtask_from_args(
             clean_args.push(arg.clone());
         }
     }
-
     (subtask, clean_args)
 }
 
@@ -64,6 +61,14 @@ struct Cli {
     /// Override the AI model to use (e.g., gpt-4o, kimi-k2)
     #[arg(short, long, global = true)]
     model: Option<String>,
+
+    /// Auto-approve all tool calls (global blocklist still enforced)
+    #[arg(short, long, global = true)]
+    yes: bool,
+
+    /// Disable tool calling (single-turn mode only)
+    #[arg(long, global = true)]
+    no_tools: bool,
 
     /// Task description or file path (shorthand for `rai run`)
     task: Option<String>,
@@ -128,6 +133,8 @@ async fn handle_run(
     subtask: Option<&str>,
     args: &[String],
     model_override: Option<&str>,
+    use_agent: bool,
+    auto_approve: bool,
 ) -> anyhow::Result<()> {
     let mut config = Config::load()?;
     config.resolve_api_key()?;
@@ -204,9 +211,21 @@ async fn handle_run(
     let provider_impl = resolve_provider(&config)?;
     info!("Using provider: {}, model: {}", config.provider, model);
 
-    println!("Sending request to {}...", config.provider);
-    let response = provider_impl.chat(&model, &prompt).await?;
-    println!("\nResponse:\n{}", response);
+    if use_agent {
+        let builtin = tools::builtin_tools();
+        let agent_config = agent::AgentConfig {
+            auto_approve,
+            ..Default::default()
+        };
+        let mut agent_loop = agent::Agent::new(provider_impl, model, builtin, agent_config);
+
+        let response = agent_loop.run(&prompt).await?;
+        println!("{}", response);
+    } else {
+        println!("Sending request to {}...", config.provider);
+        let response = provider_impl.chat(&model, &prompt).await?;
+        println!("\nResponse:\n{}", response);
+    }
 
     Ok(())
 }
@@ -307,6 +326,8 @@ async fn handle_plan(
     subtask: Option<&str>,
     prefilled_args: &[String],
     model_override: Option<&str>,
+    use_agent: bool,
+    auto_approve: bool,
 ) -> anyhow::Result<()> {
     let path = Path::new(task_file);
     if !path.exists() {
@@ -376,11 +397,9 @@ async fn handle_plan(
         return Ok(());
     }
 
-    // If subtask was specified (via # in args), skip selection
     let subtask_opt: Option<&str> = if subtask.is_some() {
         subtask
     } else {
-        // Interactive: ask which section to run
         let mut options: Vec<String> = Vec::new();
         if parsed.main_task.is_some() {
             options.push("(main task)".to_string());
@@ -461,7 +480,6 @@ async fn handle_plan(
         return Ok(());
     }
 
-    // Build args from the collected variable values in declaration order
     let final_args: Vec<String> = effective_args
         .iter()
         .filter_map(|name| mapped.get(name).cloned())
@@ -472,22 +490,25 @@ async fn handle_plan(
         subtask_opt,
         &final_args,
         model_override,
+        use_agent,
+        auto_approve,
     )
     .await
 }
 
-/// Decide whether the input can execute directly (run) or needs interaction (plan).
 async fn smart_execute(
     task: &str,
     subtask: Option<&str>,
     args: &[String],
     model_override: Option<&str>,
+    use_agent: bool,
+    auto_approve: bool,
 ) -> anyhow::Result<()> {
     let task_path = Path::new(task);
     let is_file = task_path.exists() && task_path.is_file();
 
     if !is_file {
-        return handle_run(task, subtask, args, model_override).await;
+        return handle_run(task, subtask, args, model_override, use_agent, auto_approve).await;
     }
 
     let parsed = task_parser::parse_task_file(task_path)?;
@@ -495,7 +516,7 @@ async fn smart_execute(
     let section = match parsed.get_section(subtask) {
         Ok(s) => s,
         Err(_) if subtask.is_none() && !parsed.subtasks.is_empty() => {
-            return handle_plan(task, subtask, args, model_override).await;
+            return handle_plan(task, subtask, args, model_override, use_agent, auto_approve).await;
         }
         Err(e) => return Err(e),
     };
@@ -503,11 +524,11 @@ async fn smart_execute(
     let vars = template::find_variables(&section.content);
 
     if vars.is_empty() || args.len() >= vars.len() {
-        handle_run(task, subtask, args, model_override).await
+        handle_run(task, subtask, args, model_override, use_agent, auto_approve).await
     } else if is_interactive() {
-        handle_plan(task, subtask, args, model_override).await
+        handle_plan(task, subtask, args, model_override, use_agent, auto_approve).await
     } else {
-        handle_run(task, subtask, args, model_override).await
+        handle_run(task, subtask, args, model_override, use_agent, auto_approve).await
     }
 }
 
@@ -532,6 +553,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(model) = cli.model.as_ref() {
         info!("Overriding model to: {}", model);
     }
+
+    let use_agent = !cli.no_tools;
+    let auto_approve = cli.yes;
 
     match &cli.command {
         Some(Commands::Config) => {
@@ -599,6 +623,8 @@ async fn main() -> anyhow::Result<()> {
                 resolved_subtask.as_deref(),
                 &clean_args,
                 cli.model.as_deref(),
+                use_agent,
+                auto_approve,
             )
             .await?;
         }
@@ -617,6 +643,8 @@ async fn main() -> anyhow::Result<()> {
                 resolved_subtask.as_deref(),
                 &clean_args,
                 cli.model.as_deref(),
+                use_agent,
+                auto_approve,
             )
             .await?;
         }
@@ -629,6 +657,8 @@ async fn main() -> anyhow::Result<()> {
                     subtask.as_deref(),
                     &clean_args,
                     cli.model.as_deref(),
+                    use_agent,
+                    auto_approve,
                 )
                 .await?;
             } else {
