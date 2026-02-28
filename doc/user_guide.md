@@ -51,6 +51,18 @@ rai task.md src/main.rs
 
 If your `task.md` has `{{ filename }}`, the above command will inject `src/main.rs` into that position.
 
+### 3.5 Billing Summary (`--bill`)
+Use `--bill` to print API usage for the current command:
+
+```bash
+rai --bill "Summarize this"
+```
+
+At the end of execution, Rai prints:
+- API calls made
+- Input tokens used
+- Output tokens used
+
 ## 4. Creating Tasks
 
 Use the interactive assistant to generate a new task file:

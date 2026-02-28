@@ -119,6 +119,24 @@ fn test_run_adhoc_no_api_key() {
 }
 
 #[test]
+fn test_bill_flag_reports_zero_usage_when_no_api_call_is_made() {
+    let output = rai_bin()
+        .args(["--bill", "run", "Hello world"])
+        .env_remove("RAI_API_KEY")
+        .env_remove("POE_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("=== Billing Summary ==="));
+    assert!(stdout.contains("API calls: 0"));
+    assert!(stdout.contains("Input tokens: 0"));
+    assert!(stdout.contains("Output tokens: 0"));
+}
+
+#[test]
 fn test_run_adhoc_reaches_provider() {
     let output = rai_bin()
         .args(["run", "Hello"])
@@ -321,4 +339,18 @@ fn test_plan_hint_uses_shorthand() {
         "Plan hint should use shorthand syntax: {}",
         stdout
     );
+}
+
+#[test]
+fn test_bill_flag_on_plan_reports_zero_usage() {
+    let output = rai_bin()
+        .args(["--bill", "plan", "demo/task.md"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("=== Billing Summary ==="));
+    assert!(stdout.contains("API calls: 0"));
+    assert!(stdout.contains("Input tokens: 0"));
+    assert!(stdout.contains("Output tokens: 0"));
 }

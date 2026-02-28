@@ -1,5 +1,5 @@
-use super::{Message, Provider, ProviderResponse};
-use crate::tools::{ToolCall, ToolDefinition, tools_to_api_json};
+use super::{record_api_call, record_usage_from_response, Message, Provider, ProviderResponse};
+use crate::tools::{tools_to_api_json, ToolCall, ToolDefinition};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -30,16 +30,19 @@ impl PoeProvider {
             .send()
             .await
             .context("Failed to send request to Poe API")?;
+        record_api_call();
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             anyhow::bail!("Poe API error: {}", error_text);
         }
 
-        response
+        let response_json: Value = response
             .json()
             .await
-            .context("Failed to parse Poe API response")
+            .context("Failed to parse Poe API response")?;
+        record_usage_from_response(&response_json);
+        Ok(response_json)
     }
 }
 
@@ -101,13 +104,9 @@ impl Provider for PoeProvider {
             let mut tool_calls = Vec::new();
             for tc in tool_calls_json {
                 let id = tc["id"].as_str().unwrap_or("").to_string();
-                let name = tc["function"]["name"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
+                let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
                 let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                let arguments: Value =
-                    serde_json::from_str(args_str).unwrap_or(json!({}));
+                let arguments: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
 
                 tool_calls.push(ToolCall {
                     id,
