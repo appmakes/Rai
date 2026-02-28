@@ -7,11 +7,14 @@ use std::path::Path;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+mod agent;
 mod config;
 mod key_store;
+mod permission;
 mod providers;
 mod task_parser;
 mod template;
+mod tools;
 
 use providers::Provider;
 
@@ -27,6 +30,25 @@ fn is_interactive() -> bool {
     atty::is(atty::Stream::Stdin) && std::env::var("CI").is_err()
 }
 
+fn extract_subtask_from_args(
+    explicit_subtask: Option<&str>,
+    args: &[String],
+) -> (Option<String>, Vec<String>) {
+    if explicit_subtask.is_some() {
+        return (explicit_subtask.map(|s| s.to_string()), args.to_vec());
+    }
+    let mut subtask = None;
+    let mut clean_args = Vec::new();
+    for arg in args {
+        if subtask.is_none() && arg.starts_with('#') && arg.len() > 1 {
+            subtask = Some(arg[1..].to_string());
+        } else {
+            clean_args.push(arg.clone());
+        }
+    }
+    (subtask, clean_args)
+}
+
 #[derive(Parser)]
 #[command(name = "rai")]
 #[command(version)]
@@ -34,12 +56,20 @@ fn is_interactive() -> bool {
 #[command(args_conflicts_with_subcommands = true)]
 struct Cli {
     /// Turn debugging information on
-    #[arg(short, long, action = clap::ArgAction::Count)]
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
 
     /// Override the AI model to use (e.g., gpt-4o, kimi-k2)
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     model: Option<String>,
+
+    /// Auto-approve all tool calls (global blocklist still enforced)
+    #[arg(short, long, global = true)]
+    yes: bool,
+
+    /// Disable tool calling (single-turn mode only)
+    #[arg(long, global = true)]
+    no_tools: bool,
 
     /// Task description or file path (shorthand for `rai run`)
     task: Option<String>,
@@ -56,7 +86,7 @@ struct Cli {
 enum Commands {
     /// Configure AI model provider and other settings
     Config,
-    /// Run a task
+    /// Run a task directly
     Run {
         /// The task description or file path
         task: String,
@@ -65,7 +95,7 @@ enum Commands {
         #[arg(short, long)]
         subtask: Option<String>,
 
-        /// Arguments for the task
+        /// Arguments for the task (including #subtask selector)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -78,6 +108,14 @@ enum Commands {
     Plan {
         /// The task file to plan
         task_file: String,
+
+        /// Optional sub-task name (e.g., #summary)
+        #[arg(short, long)]
+        subtask: Option<String>,
+
+        /// Arguments pre-filled for the task
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 }
 
@@ -161,6 +199,8 @@ async fn handle_run(
     subtask: Option<&str>,
     args: &[String],
     model_override: Option<&str>,
+    use_agent: bool,
+    auto_approve: bool,
 ) -> anyhow::Result<()> {
     let task_path = Path::new(task);
     let is_file = task_path.exists() && task_path.is_file();
@@ -248,9 +288,21 @@ async fn handle_run(
     let provider_impl = resolve_provider(&config)?;
     info!("Using provider: {}, model: {}", config.provider, model);
 
-    println!("Sending request to {}...", config.provider);
-    let response = provider_impl.chat(&model, &prompt).await?;
-    println!("\nResponse:\n{}", response);
+    if use_agent {
+        let builtin = tools::builtin_tools();
+        let agent_config = agent::AgentConfig {
+            auto_approve,
+            ..Default::default()
+        };
+        let mut agent_loop = agent::Agent::new(provider_impl, model, builtin, agent_config);
+
+        let response = agent_loop.run(&prompt).await?;
+        println!("{}", response);
+    } else {
+        println!("Sending request to {}...", config.provider);
+        let response = provider_impl.chat(&model, &prompt).await?;
+        println!("\nResponse:\n{}", response);
+    }
 
     Ok(())
 }
@@ -319,8 +371,6 @@ fn handle_create(filename: &str) -> anyhow::Result<()> {
     }
 
     let mut content = String::new();
-
-    // Frontmatter
     content.push_str("---\n");
     if !model.is_empty() {
         content.push_str(&format!("model: {}\n", model));
@@ -333,11 +383,9 @@ fn handle_create(filename: &str) -> anyhow::Result<()> {
     }
     content.push_str("---\n\n");
 
-    // Main task
     content.push_str(&format!("# {}\n", task_name));
     content.push_str(&format!("{}\n", task_description));
 
-    // Sub-tasks
     for (name, desc) in &subtasks {
         content.push_str(&format!("\n## {}\n", name));
         content.push_str(&format!("{}\n", desc));
@@ -353,7 +401,14 @@ fn handle_create(filename: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_plan(task_file: &str) -> anyhow::Result<()> {
+async fn handle_plan(
+    task_file: &str,
+    subtask: Option<&str>,
+    prefilled_args: &[String],
+    model_override: Option<&str>,
+    use_agent: bool,
+    auto_approve: bool,
+) -> anyhow::Result<()> {
     let path = Path::new(task_file);
     if !path.exists() {
         anyhow::bail!("Task file '{}' not found.", task_file);
@@ -363,7 +418,6 @@ fn handle_plan(task_file: &str) -> anyhow::Result<()> {
 
     println!("=== Task Plan: {} ===\n", task_file);
 
-    // Show global frontmatter
     if let Some(model) = &parsed.global_frontmatter.model {
         println!("Model: {}", model);
     }
@@ -375,7 +429,6 @@ fn handle_plan(task_file: &str) -> anyhow::Result<()> {
     }
     println!();
 
-    // Show main task
     if let Some(main) = &parsed.main_task {
         println!("--- Main Task: {} ---", main.name);
         let vars = template::find_variables(&main.content);
@@ -392,7 +445,6 @@ fn handle_plan(task_file: &str) -> anyhow::Result<()> {
         println!();
     }
 
-    // Show subtasks
     let subtask_names = parsed.list_subtasks();
     if !subtask_names.is_empty() {
         println!("--- Sub-tasks ---");
@@ -413,103 +465,145 @@ fn handle_plan(task_file: &str) -> anyhow::Result<()> {
 
     if !is_interactive() {
         println!(
-            "Non-interactive mode: use `rai run {} --subtask <name> [args...]` to execute.",
+            "Non-interactive mode: use `rai {} [#subtask] [args...]` to execute.",
             task_file
         );
         return Ok(());
     }
 
-    // Interactive: ask which section to run
-    let mut options: Vec<String> = Vec::new();
-    if parsed.main_task.is_some() {
-        options.push("(main task)".to_string());
-    }
-    for name in &subtask_names {
-        options.push(format!("#{}", name));
-    }
-    options.push("(cancel)".to_string());
+    let subtask_opt: Option<&str> = if subtask.is_some() {
+        subtask
+    } else {
+        let mut options: Vec<String> = Vec::new();
+        if parsed.main_task.is_some() {
+            options.push("(main task)".to_string());
+        }
+        for name in &subtask_names {
+            options.push(format!("#{}", name));
+        }
+        options.push("(cancel)".to_string());
 
-    let selection = Select::new()
-        .with_prompt("Select a task to execute")
-        .items(&options)
-        .default(0)
-        .interact_opt()?;
+        let selection = Select::new()
+            .with_prompt("Select a task to execute")
+            .items(&options)
+            .default(0)
+            .interact_opt()?;
 
-    match selection {
-        Some(idx) => {
-            let cancel_idx = options.len() - 1;
-            if idx == cancel_idx {
-                println!("Cancelled.");
-                return Ok(());
-            }
+        match selection {
+            Some(idx) => {
+                let cancel_idx = options.len() - 1;
+                if idx == cancel_idx {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
 
-            let has_main = parsed.main_task.is_some();
-            let subtask_opt = if has_main && idx == 0 {
-                None
-            } else {
-                let sub_idx = if has_main { idx - 1 } else { idx };
-                Some(subtask_names[sub_idx])
-            };
-
-            let section = parsed.get_section(subtask_opt)?;
-            let all_args = template::collect_all_args(
-                &parsed.global_frontmatter.args,
-                &section.frontmatter.args,
-            );
-            let vars = template::find_variables(&section.content);
-
-            let mut variable_values = std::collections::HashMap::new();
-            for var in &vars {
-                let prompt_label = if all_args.contains(var) {
-                    var.to_string()
+                let has_main = parsed.main_task.is_some();
+                if has_main && idx == 0 {
+                    None
                 } else {
-                    format!("{} (undeclared)", var)
-                };
-                let value: String = Input::new().with_prompt(prompt_label).interact_text()?;
-                variable_values.insert(var.clone(), value);
+                    let sub_idx = if has_main { idx - 1 } else { idx };
+                    Some(subtask_names[sub_idx])
+                }
             }
-
-            let rendered = template::render(&section.content, &variable_values)?;
-
-            println!("\n=== Final Prompt ===");
-            println!("{}", rendered);
-
-            let approx_tokens = rendered.split_whitespace().count() * 4 / 3;
-            println!("\nEstimated tokens: ~{}", approx_tokens);
-
-            let confirm = Confirm::new()
-                .with_prompt("Execute this task?")
-                .default(true)
-                .interact()?;
-
-            if !confirm {
+            None => {
                 println!("Cancelled.");
                 return Ok(());
             }
-
-            println!("\nTo execute, run:");
-            let args_str: Vec<String> = vars
-                .iter()
-                .filter_map(|v| variable_values.get(v).cloned())
-                .collect();
-
-            if let Some(sub) = subtask_opt {
-                println!(
-                    "  rai run {} --subtask {} {}",
-                    task_file,
-                    sub,
-                    args_str.join(" ")
-                );
-            } else {
-                println!("  rai run {} {}", task_file, args_str.join(" "));
-            }
         }
-        None => {
-            println!("Cancelled.");
+    };
+
+    let section = parsed.get_section(subtask_opt)?;
+    let all_args = template::collect_all_args(
+        &parsed.global_frontmatter.args,
+        &section.frontmatter.args,
+    );
+    let vars = template::find_variables(&section.content);
+
+    let effective_args = if all_args.is_empty() && !vars.is_empty() {
+        vars.clone()
+    } else {
+        all_args
+    };
+
+    let mut mapped = template::map_args_to_variables(&effective_args, prefilled_args)?;
+
+    for var in &vars {
+        if !mapped.contains_key(var) {
+            let value: String = Input::new()
+                .with_prompt(var)
+                .interact_text()?;
+            mapped.insert(var.clone(), value);
         }
     }
 
-    Ok(())
+    let rendered = template::render(&section.content, &mapped)?;
+
+    println!("\n=== Final Prompt ===");
+    println!("{}", rendered);
+
+    let approx_tokens = rendered.split_whitespace().count() * 4 / 3;
+    println!("\nEstimated tokens: ~{}", approx_tokens);
+
+    let confirm = Confirm::new()
+        .with_prompt("Execute this task?")
+        .default(true)
+        .interact()?;
+
+    if !confirm {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    let final_args: Vec<String> = effective_args
+        .iter()
+        .filter_map(|name| mapped.get(name).cloned())
+        .collect();
+
+    handle_run(
+        task_file,
+        subtask_opt,
+        &final_args,
+        model_override,
+        use_agent,
+        auto_approve,
+    )
+    .await
+}
+
+async fn smart_execute(
+    task: &str,
+    subtask: Option<&str>,
+    args: &[String],
+    model_override: Option<&str>,
+    use_agent: bool,
+    auto_approve: bool,
+) -> anyhow::Result<()> {
+    let task_path = Path::new(task);
+    let is_file = task_path.exists() && task_path.is_file();
+
+    if !is_file {
+        return handle_run(task, subtask, args, model_override, use_agent, auto_approve).await;
+    }
+
+    let parsed = task_parser::parse_task_file(task_path)?;
+
+    let section = match parsed.get_section(subtask) {
+        Ok(s) => s,
+        Err(_) if subtask.is_none() && !parsed.subtasks.is_empty() => {
+            return handle_plan(task, subtask, args, model_override, use_agent, auto_approve).await;
+        }
+        Err(e) => return Err(e),
+    };
+
+    let vars = template::find_variables(&section.content);
+
+    if vars.is_empty() || args.len() >= vars.len() {
+        handle_run(task, subtask, args, model_override, use_agent, auto_approve).await
+    } else if is_interactive() {
+        handle_plan(task, subtask, args, model_override, use_agent, auto_approve).await
+    } else {
+        handle_run(task, subtask, args, model_override, use_agent, auto_approve).await
+    }
 }
 
 #[tokio::main]
@@ -530,6 +624,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(model) = cli.model.as_ref() {
         info!("Overriding model to: {}", model);
     }
+
+    let use_agent = !cli.no_tools;
+    let auto_approve = cli.yes;
 
     match &cli.command {
         Some(Commands::Config) => {
@@ -589,18 +686,51 @@ async fn main() -> anyhow::Result<()> {
             subtask,
             args,
         }) => {
-            handle_run(task, subtask.as_deref(), args, cli.model.as_deref()).await?;
+            let (resolved_subtask, clean_args) =
+                extract_subtask_from_args(subtask.as_deref(), args);
+            handle_run(
+                task,
+                resolved_subtask.as_deref(),
+                &clean_args,
+                cli.model.as_deref(),
+                use_agent,
+                auto_approve,
+            )
+            .await?;
         }
         Some(Commands::Create { filename }) => {
             handle_create(filename)?;
         }
-        Some(Commands::Plan { task_file }) => {
-            handle_plan(task_file)?;
+        Some(Commands::Plan {
+            task_file,
+            subtask,
+            args,
+        }) => {
+            let (resolved_subtask, clean_args) =
+                extract_subtask_from_args(subtask.as_deref(), args);
+            handle_plan(
+                task_file,
+                resolved_subtask.as_deref(),
+                &clean_args,
+                cli.model.as_deref(),
+                use_agent,
+                auto_approve,
+            )
+            .await?;
         }
         None => {
-            if let Some(task) = cli.task.as_deref() {
-                let (subtask, args) = parse_shorthand_args(&cli.args);
-                handle_run(task, subtask.as_deref(), &args, cli.model.as_deref()).await?;
+            if let Some(task) = &cli.task {
+                let (subtask, clean_args) =
+                    extract_subtask_from_args(None, &cli.args);
+                smart_execute(
+                    task,
+                    subtask.as_deref(),
+                    &clean_args,
+                    cli.model.as_deref(),
+                    use_agent,
+                    auto_approve,
+                )
+                .await?;
             } else {
                 use clap::CommandFactory;
                 Cli::command().print_help()?;
