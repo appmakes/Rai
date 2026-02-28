@@ -69,6 +69,19 @@ rai run "Explain quantum computing"
 rai run --model claude-3-opus "Explain quantum computing"
 ```
 
+## Billing Output
+
+Use `--bill` to print usage stats for the current command:
+
+```bash
+rai --bill run "Hello world"
+```
+
+The summary includes:
+- API calls
+- Input tokens
+- Output tokens
+
 ## Poe Integration (Phase 3)
 
 To use Poe:

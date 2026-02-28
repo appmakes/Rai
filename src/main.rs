@@ -16,7 +16,7 @@ mod task_parser;
 mod template;
 mod tools;
 
-use providers::Provider;
+use providers::{get_billing_stats, reset_billing_stats, BillingStats, Provider};
 
 fn set_api_key_helper(provider: &str, api_key: &str) -> anyhow::Result<()> {
     key_store::set_api_key(provider, api_key)
@@ -70,6 +70,10 @@ struct Cli {
     /// Disable tool calling (single-turn mode only)
     #[arg(long, global = true)]
     no_tools: bool,
+
+    /// Print API-call and token usage summary for this command
+    #[arg(long, global = true)]
+    bill: bool,
 
     /// Task description or file path (shorthand for `rai run`)
     task: Option<String>,
@@ -199,6 +203,13 @@ fn parse_shorthand_args(raw_args: &[String]) -> (Option<String>, Vec<String>) {
 
     args.extend(raw_args.iter().skip(1).cloned());
     (subtask, args)
+}
+
+fn print_billing_summary(stats: BillingStats) {
+    println!("\n=== Billing Summary ===");
+    println!("API calls: {}", stats.api_calls);
+    println!("Input tokens: {}", stats.input_tokens);
+    println!("Output tokens: {}", stats.output_tokens);
 }
 
 async fn handle_run(
@@ -630,119 +641,131 @@ async fn main() -> anyhow::Result<()> {
 
     let use_agent = !cli.no_tools;
     let auto_approve = cli.yes;
+    if cli.bill {
+        reset_billing_stats();
+    }
 
-    match &cli.command {
-        Some(Commands::Config) => {
-            if !is_interactive() {
-                anyhow::bail!(
-                    "Cannot run `rai config` in non-interactive mode. \
-                     Set RAI_API_KEY and configure via environment variables or config file."
-                );
-            }
-
-            info!("Config command selected");
-            let mut config = Config::load()?;
-
-            let providers = vec!["poe", "openai", "anthropic", "google"];
-            let default_provider_index = providers
-                .iter()
-                .position(|&p| p == config.provider)
-                .unwrap_or(0);
-
-            let selection = Select::new()
-                .with_prompt("Select AI Provider")
-                .items(&providers)
-                .default(default_provider_index)
-                .interact_opt()?;
-
-            let provider = match selection {
-                Some(index) => providers[index].to_string(),
-                None => {
-                    println!("Operation cancelled.");
-                    return Ok(());
+    let execution_result: anyhow::Result<()> = async {
+        match &cli.command {
+            Some(Commands::Config) => {
+                if !is_interactive() {
+                    anyhow::bail!(
+                        "Cannot run `rai config` in non-interactive mode. \
+                         Set RAI_API_KEY and configure via environment variables or config file."
+                    );
                 }
-            };
-            config.provider = provider.clone();
-            config.providers = vec![provider.clone()];
-            config.default_provider = Some(provider.clone());
 
-            let api_key: String = Input::new()
-                .with_prompt("API Key (saved to system keyring)")
-                .default(String::new())
-                .interact_text()?;
+                info!("Config command selected");
+                let mut config = Config::load()?;
 
-            set_api_key_helper(&provider, &api_key).context("Failed to save API key to keyring")?;
+                let providers = vec!["poe", "openai", "anthropic", "google"];
+                let default_provider_index = providers
+                    .iter()
+                    .position(|&p| p == config.provider)
+                    .unwrap_or(0);
 
-            let default_model: String = Input::new()
-                .with_prompt("Default Model")
-                .default(if config.default_model.is_empty() {
-                    "gpt-4o".to_string()
-                } else {
-                    config.default_model.clone()
-                })
-                .interact_text()?;
-            config.default_model = default_model;
+                let selection = Select::new()
+                    .with_prompt("Select AI Provider")
+                    .items(&providers)
+                    .default(default_provider_index)
+                    .interact_opt()?;
 
-            config.save()?;
-            println!("Configuration saved successfully!");
-        }
-        Some(Commands::Run {
-            task,
-            subtask,
-            args,
-        }) => {
-            let (resolved_subtask, clean_args) =
-                extract_subtask_from_args(subtask.as_deref(), args);
-            handle_run(
+                let provider = match selection {
+                    Some(index) => providers[index].to_string(),
+                    None => {
+                        println!("Operation cancelled.");
+                        return Ok(());
+                    }
+                };
+                config.provider = provider.clone();
+                config.providers = vec![provider.clone()];
+                config.default_provider = Some(provider.clone());
+
+                let api_key: String = Input::new()
+                    .with_prompt("API Key (saved to system keyring)")
+                    .default(String::new())
+                    .interact_text()?;
+
+                set_api_key_helper(&provider, &api_key)
+                    .context("Failed to save API key to keyring")?;
+
+                let default_model: String = Input::new()
+                    .with_prompt("Default Model")
+                    .default(if config.default_model.is_empty() {
+                        "gpt-4o".to_string()
+                    } else {
+                        config.default_model.clone()
+                    })
+                    .interact_text()?;
+                config.default_model = default_model;
+
+                config.save()?;
+                println!("Configuration saved successfully!");
+            }
+            Some(Commands::Run {
                 task,
-                resolved_subtask.as_deref(),
-                &clean_args,
-                cli.model.as_deref(),
-                use_agent,
-                auto_approve,
-            )
-            .await?;
-        }
-        Some(Commands::Create { filename }) => {
-            handle_create(filename)?;
-        }
-        Some(Commands::Plan {
-            task_file,
-            subtask,
-            args,
-        }) => {
-            let (resolved_subtask, clean_args) =
-                extract_subtask_from_args(subtask.as_deref(), args);
-            handle_plan(
-                task_file,
-                resolved_subtask.as_deref(),
-                &clean_args,
-                cli.model.as_deref(),
-                use_agent,
-                auto_approve,
-            )
-            .await?;
-        }
-        None => {
-            if let Some(task) = &cli.task {
-                let (subtask, clean_args) = extract_subtask_from_args(None, &cli.args);
-                smart_execute(
+                subtask,
+                args,
+            }) => {
+                let (resolved_subtask, clean_args) =
+                    extract_subtask_from_args(subtask.as_deref(), args);
+                handle_run(
                     task,
-                    subtask.as_deref(),
+                    resolved_subtask.as_deref(),
                     &clean_args,
                     cli.model.as_deref(),
                     use_agent,
                     auto_approve,
                 )
                 .await?;
-            } else {
-                use clap::CommandFactory;
-                Cli::command().print_help()?;
+            }
+            Some(Commands::Create { filename }) => {
+                handle_create(filename)?;
+            }
+            Some(Commands::Plan {
+                task_file,
+                subtask,
+                args,
+            }) => {
+                let (resolved_subtask, clean_args) =
+                    extract_subtask_from_args(subtask.as_deref(), args);
+                handle_plan(
+                    task_file,
+                    resolved_subtask.as_deref(),
+                    &clean_args,
+                    cli.model.as_deref(),
+                    use_agent,
+                    auto_approve,
+                )
+                .await?;
+            }
+            None => {
+                if let Some(task) = &cli.task {
+                    let (subtask, clean_args) = extract_subtask_from_args(None, &cli.args);
+                    smart_execute(
+                        task,
+                        subtask.as_deref(),
+                        &clean_args,
+                        cli.model.as_deref(),
+                        use_agent,
+                        auto_approve,
+                    )
+                    .await?;
+                } else {
+                    use clap::CommandFactory;
+                    Cli::command().print_help()?;
+                }
             }
         }
+        Ok(())
+    }
+    .await;
+
+    if cli.bill {
+        print_billing_summary(get_billing_stats());
     }
 
-    Ok(())
+    execution_result
 }
 
 #[cfg(test)]

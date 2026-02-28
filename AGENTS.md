@@ -25,12 +25,16 @@ Key commands:
 
 ### Configuration
 
-- Config file: `~/.config/rai/config.toml` (fields: `provider`, `default_model`)
+- Config file: `~/.config/rai/config.toml` (fields: `providers`, `default_provider`, `default_model`; legacy `provider` is still read)
 - API key resolution order: `RAI_API_KEY` env var → provider-specific env var (e.g. `POE_API_KEY`) → OS keyring
-- Only the `poe` provider is implemented; set `provider = "poe"` in config
+- Only the `poe` provider is implemented; set `providers = ["poe"]` and `default_provider = "poe"` in config
 - The `keyring` crate requires `libdbus-1-dev` on Linux (system dependency)
 - CI/CD mode (detected via `CI` env var or non-TTY stdin) disables interactive prompts
 
 ### System dependencies
 
 - `libdbus-1-dev` and `pkg-config` are required for the `keyring` crate to compile
+
+### Workflow preference
+
+- When implementing code modifications or new features, always update related documentation in the same change.
