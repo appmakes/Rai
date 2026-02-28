@@ -74,7 +74,7 @@ rai run --model claude-3-opus "Explain quantum computing"
 Use `--bill` to print usage stats for the current command:
 
 ```bash
-rai --bill run "Hello world"
+rai run "Hello world" --bill
 ```
 
 The summary includes:
