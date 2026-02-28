@@ -1,8 +1,39 @@
-use std::process::{Command, Stdio};
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn integration_test_home() -> &'static PathBuf {
+    static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
+    TEST_HOME.get_or_init(|| {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!(
+            "rai-integration-home-{}-{}",
+            std::process::id(),
+            nonce
+        ));
+        let config_dir = home.join(".config").join("rai");
+
+        fs::create_dir_all(&config_dir)
+            .expect("failed to create integration-test config directory");
+        fs::write(
+            config_dir.join("config.toml"),
+            "providers = [\"poe\"]\ndefault_provider = \"poe\"\ndefault_model = \"gpt-4o\"\n",
+        )
+        .expect("failed to write integration-test config file");
+
+        home
+    })
+}
 
 fn rai_bin() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_rai"));
     cmd.env("CI", "1");
+    cmd.env("HOME", integration_test_home());
     cmd
 }
 
@@ -94,10 +125,7 @@ fn test_run_adhoc_reaches_provider() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !output.status.success(),
-        "Expected failure with dummy key"
-    );
+    assert!(!output.status.success(), "Expected failure with dummy key");
     assert!(
         stderr.contains("API") || stderr.contains("error") || stderr.contains("not yet supported"),
         "Expected API or provider error, stderr: {}",
@@ -284,10 +312,7 @@ fn test_plan_with_hash_subtask() {
 
 #[test]
 fn test_plan_hint_uses_shorthand() {
-    let output = rai_bin()
-        .args(["plan", "demo/task.md"])
-        .output()
-        .unwrap();
+    let output = rai_bin().args(["plan", "demo/task.md"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
