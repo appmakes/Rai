@@ -344,13 +344,13 @@ fn test_plan_hint_uses_shorthand() {
 #[test]
 fn test_bill_flag_on_plan_reports_zero_usage() {
     let output = rai_bin()
-        .args(["--bill", "plan", "demo/task.md"])
+        .args(["plan", "demo/task.md", "--bill"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("=== Billing Summary ==="));
-    assert!(stdout.contains("API calls: 0"));
-    assert!(stdout.contains("Input tokens: 0"));
-    assert!(stdout.contains("Output tokens: 0"));
+    assert!(stdout.contains("API calls: 0"), "stdout: {}", stdout);
+    assert!(stdout.contains("Input tokens: 0"), "stdout: {}", stdout);
+    assert!(stdout.contains("Output tokens: 0"), "stdout: {}", stdout);
 }
