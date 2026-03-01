@@ -108,7 +108,7 @@ For detailed runtime logs (tool calls/provider notices), add `--log`:
 rai run "whois google.com" --bill --log
 ```
 
-By default, Rai keeps `run` output concise and highlights the final answer.
+By default, Rai keeps `run` output concise and prints the final answer in your terminal's default text color.
 
 Common tool-driven prompts:
 

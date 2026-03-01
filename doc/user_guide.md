@@ -88,7 +88,7 @@ At the end of execution, Rai prints:
 - Output tokens used
 
 ### 4.6 Clean vs Detailed Output (`--log`)
-By default, `rai run` keeps output short and highlights the final answer for faster scanning.
+By default, `rai run` keeps output short and prints the final answer in your terminal's default text color for readability.
 
 Use `--log` when you want detailed runtime info (tool calls, provider notices):
 
