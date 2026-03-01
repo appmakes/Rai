@@ -259,6 +259,12 @@ enum AssistantStatus {
     FailedButNeedFurtherSteps,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UserFinalState {
+    Success,
+    Fail,
+}
+
 #[cfg(test)]
 fn parse_shorthand_args(raw_args: &[String]) -> (Option<String>, Vec<String>) {
     let mut subtask: Option<String> = None;
@@ -678,14 +684,16 @@ fn print_processed_response(response: &str, think_enabled: bool) {
     }
 
     let candidate = if !has_thoughts {
-        response.trim()
+        response.trim().to_string()
     } else {
-        cleaned.trim()
+        cleaned.trim().to_string()
     };
-    if candidate.is_empty() {
+    let visible = strip_internal_status_lines(&candidate);
+    let visible = visible.trim();
+    if visible.is_empty() {
         print_result(response.trim());
     } else {
-        print_result(candidate);
+        print_result(visible);
     }
 }
 
@@ -696,24 +704,42 @@ fn parse_assistant_status(response: &str) -> Option<AssistantStatus> {
         if trimmed.is_empty() {
             continue;
         }
-        let Some((label, value)) = trimmed.split_once(':') else {
-            continue;
-        };
-        if !label.trim().eq_ignore_ascii_case("status") {
-            continue;
+        if let Some(status) = parse_status_line(trimmed) {
+            return Some(status);
         }
-        let normalized = value.trim().to_ascii_lowercase().replace([' ', '-'], "_");
-        let status = match normalized.as_str() {
-            "success" => AssistantStatus::Success,
-            "success_with_warnings" => AssistantStatus::SuccessWithWarnings,
-            "success_but_can_go_deeper" => AssistantStatus::SuccessButCanGoDeeper,
-            "failed_and_end_the_loop" => AssistantStatus::FailedAndEndTheLoop,
-            "failed_but_need_further_steps" => AssistantStatus::FailedButNeedFurtherSteps,
-            _ => continue,
-        };
-        return Some(status);
     }
     None
+}
+
+fn parse_status_line(trimmed_line: &str) -> Option<AssistantStatus> {
+    let (label, value) = trimmed_line.split_once(':')?;
+    if !label.trim().eq_ignore_ascii_case("status") {
+        return None;
+    }
+    let normalized = value.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+    match normalized.as_str() {
+        "success" => Some(AssistantStatus::Success),
+        "success_with_warnings" => Some(AssistantStatus::SuccessWithWarnings),
+        "success_but_can_go_deeper" => Some(AssistantStatus::SuccessButCanGoDeeper),
+        "failed_and_end_the_loop" => Some(AssistantStatus::FailedAndEndTheLoop),
+        "failed_but_need_further_steps" => Some(AssistantStatus::FailedButNeedFurtherSteps),
+        _ => None,
+    }
+}
+
+fn strip_internal_status_lines(text: &str) -> String {
+    text.lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let trimmed = line.trim();
+            if index < 12 && parse_status_line(trimmed).is_some() {
+                None
+            } else {
+                Some(line)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn response_has_failure_language(response: &str) -> bool {
@@ -735,25 +761,33 @@ fn response_has_failure_language(response: &str) -> bool {
     .any(|needle| lowercase.contains(needle))
 }
 
-fn print_and_validate_response(response: &str, think_enabled: bool) -> anyhow::Result<()> {
-    print_processed_response(response, think_enabled);
+fn derive_user_final_state(response: &str) -> UserFinalState {
     match parse_assistant_status(response) {
         Some(AssistantStatus::Success)
         | Some(AssistantStatus::SuccessWithWarnings)
-        | Some(AssistantStatus::SuccessButCanGoDeeper) => Ok(()),
-        Some(AssistantStatus::FailedAndEndTheLoop) => anyhow::bail!(
-            "Assistant reported failed_and_end_the_loop. Returning non-zero exit code."
-        ),
-        Some(AssistantStatus::FailedButNeedFurtherSteps) => anyhow::bail!(
-            "Assistant reported failed_but_need_further_steps but request was not completed. Returning non-zero exit code."
-        ),
+        | Some(AssistantStatus::SuccessButCanGoDeeper) => UserFinalState::Success,
+        Some(AssistantStatus::FailedAndEndTheLoop)
+        | Some(AssistantStatus::FailedButNeedFurtherSteps) => UserFinalState::Fail,
         None => {
             if response_has_failure_language(response) {
-                anyhow::bail!(
-                    "Assistant response indicates failure without a success status. Returning non-zero exit code."
-                );
+                UserFinalState::Fail
+            } else {
+                UserFinalState::Success
             }
+        }
+    }
+}
+
+fn print_and_validate_response(response: &str, think_enabled: bool) -> anyhow::Result<()> {
+    print_processed_response(response, think_enabled);
+    match derive_user_final_state(response) {
+        UserFinalState::Success => {
+            println!("success");
             Ok(())
+        }
+        UserFinalState::Fail => {
+            println!("fail");
+            anyhow::bail!("Assistant response indicates failure. Returning non-zero exit code.")
         }
     }
 }
@@ -1458,9 +1492,10 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::{
         apply_status_contract_prompt, apply_think_mode_prompt, compose_adhoc_prompt,
-        ensure_non_empty_piped_stdin, extract_thinking_blocks, parse_assistant_status,
-        parse_shorthand_args, print_and_validate_response, response_has_failure_language,
-        AssistantStatus, Cli, PipedStdin,
+        derive_user_final_state, ensure_non_empty_piped_stdin, extract_thinking_blocks,
+        parse_assistant_status, parse_shorthand_args, print_and_validate_response,
+        response_has_failure_language, strip_internal_status_lines, AssistantStatus, Cli,
+        PipedStdin, UserFinalState,
     };
     use clap::Parser;
 
@@ -1552,6 +1587,12 @@ mod tests {
     }
 
     #[test]
+    fn test_strip_internal_status_lines_removes_status_for_user_output() {
+        let text = "STATUS: success_with_warnings\nResult line";
+        assert_eq!(strip_internal_status_lines(text), "Result line");
+    }
+
+    #[test]
     fn test_failure_language_detection_for_inability_reply() {
         let response = "I couldn't retrieve the current weather for Shanghai.";
         assert!(response_has_failure_language(response));
@@ -1576,6 +1617,12 @@ mod tests {
         let response = "STATUS: success\nShanghai is 18C and cloudy.";
         let result = print_and_validate_response(response, false);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_derive_user_final_state_maps_internal_status_to_fail() {
+        let response = "STATUS: failed_and_end_the_loop\nCannot complete";
+        assert_eq!(derive_user_final_state(response), UserFinalState::Fail);
     }
 
     #[test]

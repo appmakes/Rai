@@ -185,6 +185,22 @@ Do not stop yet.",
         let def = self.tools[tool_idx].definition();
         let match_target = self.tools[tool_idx].match_target(&tc.arguments);
 
+        if tc.name == "shell" {
+            if let Some(missing_cmd) = find_missing_shell_executable(&tc.arguments) {
+                if self.config.detail_enabled {
+                    eprintln!(
+                        "[rai] {}: {}  ✗ (command not found: {})",
+                        tc.name, match_target, missing_cmd
+                    );
+                }
+                return Ok(crate::tools::ToolResult {
+                    tool_call_id: tc.id.clone(),
+                    output: format!("[stderr] sh: 1: {}: not found", missing_cmd),
+                    success: false,
+                });
+            }
+        }
+
         // Layer 1: Global blocklist
         if let Some(reason) = check_global_blocklist(&match_target, &self.config.blocked_patterns) {
             if self.config.detail_enabled {
@@ -258,22 +274,6 @@ Do not stop yet.",
         tool_idx: usize,
     ) -> Result<crate::tools::ToolResult> {
         let match_target = self.tools[tool_idx].match_target(&tc.arguments);
-
-        if tc.name == "shell" {
-            if let Some(missing_cmd) = find_missing_shell_executable(&tc.arguments) {
-                if self.config.detail_enabled {
-                    eprintln!(
-                        "[rai] {}: {}  ✗ (command not found: {})",
-                        tc.name, match_target, missing_cmd
-                    );
-                }
-                return Ok(crate::tools::ToolResult {
-                    tool_call_id: tc.id.clone(),
-                    output: format!("[stderr] sh: 1: {}: not found", missing_cmd),
-                    success: false,
-                });
-            }
-        }
 
         if !atty::is(atty::Stream::Stdin) {
             if self.config.detail_enabled {
@@ -450,6 +450,7 @@ Rules:
 - Keep final answers short and clear.
 - Prefer `web_search` for discovery and `web_fetch` for page content.
 - If unsure which tools are available, call `ls_tools` first.
+- If a shell command is unavailable (e.g., `whois` not found), do NOT stop; switch to `web_search`/`web_fetch` and continue.
 - Prefer the most specific tool (e.g., `file_read` over `shell cat`).
 - For shell commands: use simple, portable commands when possible.
 - Never run destructive commands (rm -rf, drop table, etc.).
@@ -560,6 +561,14 @@ or the iteration limit is reached.\nFailed calls:",
             tool_name,
             truncate_for_retry_note(error, 280)
         ));
+    }
+    let has_missing_command = failed_calls
+        .iter()
+        .any(|(_, error)| error.to_ascii_lowercase().contains("not found"));
+    if has_missing_command {
+        note.push_str(
+            "\nHint: if a shell command is missing, do NOT end the loop. Use `web_search` for discovery and `web_fetch` to verify details, then continue.",
+        );
     }
     note
 }
@@ -684,7 +693,11 @@ fn extract_shell_executable(command: &str) -> Option<String> {
         }
         _ => {}
     }
-    tokens.get(index).map(|value| value.to_string())
+    let candidate = tokens.get(index)?;
+    if !is_simple_executable_token(candidate) {
+        return None;
+    }
+    Some((*candidate).to_string())
 }
 
 fn looks_like_env_assignment(token: &str) -> bool {
@@ -692,6 +705,13 @@ fn looks_like_env_assignment(token: &str) -> bool {
         return false;
     };
     !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn is_simple_executable_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/' || c == '+'
+        })
 }
 
 #[cfg(test)]
