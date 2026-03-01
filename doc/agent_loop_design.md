@@ -59,6 +59,7 @@ Rai ships with a small set of built-in tools that the AI can invoke:
 | Tool | Description | Default Permission |
 |------|-------------|--------------------|
 | `shell` | Execute a shell command and return stdout/stderr | `ask` |
+| `ls_tools` | List built-in tools and permissions | `allow` |
 | `file_read` | Read a file's contents | `allow` |
 | `file_write` | Write content to a file | `ask` |
 | `list_dir` | List files in a directory | `allow` |
@@ -648,7 +649,7 @@ Found 3 potential issues:
 | C.1 | Provider trait extension (`chat_with_tools`), `ProviderResponse` types | — |
 | C.2 | Permission system: parsing, resolution, two-layer check | — |
 | C.3 | Agent loop core: iteration, tool dispatch, conversation management | C.1, C.2 |
-| C.4 | Built-in tools: `shell`, `file_read`, `file_write`, `list_dir`, `http_get` | C.3 |
+| C.4 | Built-in tools: `shell`, `ls_tools`, `file_read`, `file_write`, `list_dir`, `http_get` | C.3 |
 | C.5 | Interactive approval prompt (Yes/No/Edit/Always) | C.3 |
 | C.6 | User-defined tools: `tools.toml` parsing, task-file tool merging | C.4 |
 | C.7 | Task-level overrides: restriction enforcement, pattern merging | C.6 |

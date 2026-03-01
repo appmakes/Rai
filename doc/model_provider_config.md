@@ -132,7 +132,7 @@ rai run "search latest Rust 2025 edition updates"
 rai run "fetch https://ziglang.org and summarize"
 ```
 
-Nullclaw-compatible tool aliases are included (`file_read`, `file_write`, `file_append`, `file_edit`, `http_request`, `web_fetch`, `web_search`, `git_operations`) so cross-agent tool prompts map cleanly in Rai.
+Built-in tool discovery is available via `ls_tools`, and nullclaw-compatible tool aliases are included (`file_read`, `file_write`, `file_append`, `file_edit`, `http_request`, `web_fetch`, `web_search`, `git_operations`) so cross-agent tool prompts map cleanly in Rai.
 
 Rai does not hardcode task-specific shortcuts (such as weather/whois). General prompts are handled through the provider and tool-calling flow (for example via `web_search` and `web_fetch`).
 

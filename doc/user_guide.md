@@ -129,6 +129,7 @@ rai run "compare rust and go for backend APIs" --think
 ### 4.8 Nullclaw-compatible Tool Names
 Rai now includes additional tool names compatible with `nullclaw` workflows:
 
+- `ls_tools` (tool discovery helper)
 - `file_read`
 - `file_write`
 - `file_append`
@@ -139,6 +140,8 @@ Rai now includes additional tool names compatible with `nullclaw` workflows:
 - `git_operations`
 
 These are available to the agent automatically during `rai run`.
+
+You can ask the agent to call `ls_tools` to see the current built-in tool list with permissions and descriptions.
 
 ### 4.9 Path Safety Guardrails (Unix)
 For filesystem-related tools (`file_read`, `file_write`, `file_append`, `file_edit`, `list_dir`, and git path operations), Rai always blocks system-critical Unix prefixes:

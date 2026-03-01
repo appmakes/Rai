@@ -5,6 +5,7 @@ pub mod file_write;
 pub mod git_operations;
 pub mod http_get;
 pub mod http_request;
+pub mod ls_tools;
 pub mod list_dir;
 pub mod path_security;
 pub mod shell;
@@ -52,6 +53,7 @@ pub trait Tool: Send + Sync {
 pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(shell::ShellTool),
+        Box::new(ls_tools::LsToolsTool),
         Box::new(list_dir::ListDirTool),
         Box::new(http_get::HttpGetTool),
         Box::new(file_read::FileReadTool),
@@ -96,6 +98,7 @@ mod tests {
 
         for expected in [
             "shell",
+            "ls_tools",
             "list_dir",
             "http_get",
             "file_read",
