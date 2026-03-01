@@ -31,6 +31,12 @@ Common commands:
 - `rai config` — open configuration menu
 - `rai profile list` — list profiles
 
+## Demo tasks
+
+- `demo/task.md` — code review demo template
+- `demo/translate.md` — translate `demo/text.en.strings` into 10 locales and write outputs to `target/text.<locale>.strings`
+- Run the translation demo with tool auto-approval: `rai --yes run demo/translate.md`
+
 ## Test and lint
 
 - Run tests: `cargo test`

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::process::Command;
 use tracing::info;
 
-const DEFAULT_MAX_ITERATIONS: usize = 10;
+const DEFAULT_MAX_ITERATIONS: usize = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssistantStatus {

@@ -361,6 +361,20 @@ fn test_plan_demo_task() {
 }
 
 #[test]
+fn test_plan_translate_demo_task() {
+    let output = rai_bin()
+        .args(["plan", "demo/translate.md"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Task Plan"));
+    assert!(stdout.contains("Localize Xcode strings into 10 languages"));
+    assert!(stdout.contains("zh-Hans"));
+    assert!(stdout.contains("ja-JP"));
+}
+
+#[test]
 fn test_plan_template_task() {
     let output = rai_bin()
         .args(["plan", "doc/template_task.md"])
