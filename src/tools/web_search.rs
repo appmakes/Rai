@@ -122,10 +122,12 @@ fn run_blocking_duckduckgo_html_search(query: &str, error_prefix: &str) -> Resul
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| anyhow::anyhow!("{}: {}", error_prefix_owned, e))?;
+        let form_body = format!("q={}", url_encode_component(&query_owned));
         let response = client
             .post("https://html.duckduckgo.com/html/")
             .header("User-Agent", "Rai/0.1 (+https://github.com/appmakes/Rai)")
-            .form(&[("q", query_owned)])
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(form_body)
             .send()
             .map_err(|e| anyhow::anyhow!("{}: {}", error_prefix_owned, e))?;
         if !response.status().is_success() {
