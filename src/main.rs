@@ -442,11 +442,11 @@ async fn handle_run(
         let provider_prompt = apply_think_mode_prompt(prompt, opts.think_enabled);
         if opts.detail_enabled {
             print_info(&format!("Sending request to {}...", config.provider));
-            print_detail_prompt(&provider_prompt);
+            print_detail_prompt(1, &provider_prompt);
         }
         let response = provider_impl.chat(&model, &provider_prompt).await?;
         if opts.detail_enabled {
-            print_detail_response(&response);
+            print_detail_response(1, &response);
         }
         print_processed_response(&response, opts.think_enabled);
     }
@@ -593,19 +593,21 @@ fn print_result(message: &str) {
     println!("{}", message);
 }
 
-fn print_detail_prompt(message: &str) {
+fn print_detail_prompt(request_number: usize, message: &str) {
     println!(
-        "{}[detail][prompt]{} {}",
+        "{}[detail][request #{}]{} {}",
         style_code(Style::DetailPrompt),
+        request_number,
         style_code(Style::Reset),
         message
     );
 }
 
-fn print_detail_response(message: &str) {
+fn print_detail_response(response_number: usize, message: &str) {
     println!(
-        "{}[detail][response]{} {}",
+        "{}[detail][response #{}]{} {}",
         style_code(Style::DetailResponse),
+        response_number,
         style_code(Style::Reset),
         message
     );

@@ -64,6 +64,8 @@ impl Agent {
 
         let mut messages: Vec<Message> =
             vec![Message::system(&system_prompt), Message::user(prompt)];
+        let mut request_number: usize = 0;
+        let mut pending_retry_after_failure = false;
 
         for iteration in 0..self.config.max_iterations {
             info!(
@@ -71,8 +73,9 @@ impl Agent {
                 iteration + 1,
                 self.config.max_iterations
             );
+            request_number += 1;
             if self.config.detail_enabled {
-                print_detail_prompt(&format_messages_for_detail(&messages));
+                print_detail_prompt(request_number, &format_messages_for_detail(&messages));
             }
 
             let response = self
@@ -83,18 +86,34 @@ impl Agent {
             match response {
                 ProviderResponse::Text(text) => {
                     if self.config.detail_enabled {
-                        print_detail_response(&text);
+                        print_detail_response(request_number, &text);
+                    }
+                    if pending_retry_after_failure {
+                        messages.push(Message::user(&build_retry_after_failed_text_response(
+                            &text,
+                        )));
+                        continue;
                     }
                     return Ok(text);
                 }
                 ProviderResponse::ToolCalls(tool_calls) => {
                     if self.config.detail_enabled {
-                        print_detail_response(&format_tool_calls_for_detail(&tool_calls));
+                        print_detail_response(
+                            request_number,
+                            &format_tool_calls_for_detail(&tool_calls),
+                        );
                     }
                     messages.push(Message::assistant_tool_calls(&tool_calls));
+                    let mut failed_calls: Vec<(String, String)> = Vec::new();
+                    let mut success_count = 0usize;
 
                     for tc in &tool_calls {
                         let result = self.handle_tool_call(tc)?;
+                        if result.success {
+                            success_count += 1;
+                        } else {
+                            failed_calls.push((tc.name.clone(), result.output.clone()));
+                        }
 
                         let output = if result.success {
                             result.output.clone()
@@ -103,6 +122,15 @@ impl Agent {
                         };
 
                         messages.push(Message::tool_result(&result.tool_call_id, &output));
+                    }
+
+                    if !failed_calls.is_empty() {
+                        pending_retry_after_failure = true;
+                        messages.push(Message::user(&build_retry_after_failed_tool_calls(
+                            &failed_calls,
+                        )));
+                    } else if success_count > 0 {
+                        pending_retry_after_failure = false;
                     }
                 }
             }
@@ -393,19 +421,25 @@ fn color_enabled() -> bool {
     std::env::var_os("NO_COLOR").is_none() && atty::is(atty::Stream::Stdout)
 }
 
-fn print_detail_prompt(message: &str) {
+fn print_detail_prompt(request_number: usize, message: &str) {
     if color_enabled() {
-        println!("\x1b[34m[detail][prompt]\x1b[0m {}", message);
+        println!(
+            "\x1b[34m[detail][request #{}]\x1b[0m {}",
+            request_number, message
+        );
     } else {
-        println!("[detail][prompt] {}", message);
+        println!("[detail][request #{}] {}", request_number, message);
     }
 }
 
-fn print_detail_response(message: &str) {
+fn print_detail_response(response_number: usize, message: &str) {
     if color_enabled() {
-        println!("\x1b[33m[detail][response]\x1b[0m {}", message);
+        println!(
+            "\x1b[33m[detail][response #{}]\x1b[0m {}",
+            response_number, message
+        );
     } else {
-        println!("[detail][response] {}", message);
+        println!("[detail][response #{}] {}", response_number, message);
     }
 }
 
@@ -463,4 +497,244 @@ fn format_tool_calls_for_detail(tool_calls: &[ToolCall]) -> String {
         ));
     }
     output.trim_end().to_string()
+}
+
+fn build_retry_after_failed_tool_calls(failed_calls: &[(String, String)]) -> String {
+    let mut note = String::from(
+        "[Tool execution update]\nOne or more tool calls failed. Do not stop yet.\n\
+Try alternative tools or approaches and continue until the original request is fulfilled \
+or the iteration limit is reached.\nFailed calls:",
+    );
+    for (index, (tool_name, error)) in failed_calls.iter().enumerate() {
+        note.push_str(&format!(
+            "\n{}. {}: {}",
+            index + 1,
+            tool_name,
+            truncate_for_retry_note(error, 280)
+        ));
+    }
+    note
+}
+
+fn build_retry_after_failed_text_response(text: &str) -> String {
+    format!(
+        "[Retry required]\nSome previous tool calls failed and your last reply did not \
+complete the request. Continue trying with alternative tools/sources.\nLast reply:\n{}",
+        truncate_for_retry_note(text, 500)
+    )
+}
+
+fn truncate_for_retry_note(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    input.chars().take(max_chars).collect::<String>() + "..."
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Agent, AgentConfig};
+    use crate::permission::Permission;
+    use crate::providers::{Message, Provider, ProviderResponse};
+    use crate::tools::{Tool, ToolCall, ToolDefinition};
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use serde_json::{json, Value};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Copy)]
+    enum MockMode {
+        EventualSuccess,
+        NeverRecovers,
+    }
+
+    struct MockProvider {
+        mode: MockMode,
+        call_count: Arc<Mutex<usize>>,
+        snapshots: Arc<Mutex<Vec<Vec<Message>>>>,
+    }
+
+    impl MockProvider {
+        fn new(mode: MockMode) -> (Self, Arc<Mutex<usize>>, Arc<Mutex<Vec<Vec<Message>>>>) {
+            let call_count = Arc::new(Mutex::new(0usize));
+            let snapshots = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    mode,
+                    call_count: Arc::clone(&call_count),
+                    snapshots: Arc::clone(&snapshots),
+                },
+                call_count,
+                snapshots,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl Provider for MockProvider {
+        async fn chat(&self, _model: &str, _message: &str) -> Result<String> {
+            anyhow::bail!("chat() is not used in these tests")
+        }
+
+        async fn chat_with_tools(
+            &self,
+            _model: &str,
+            messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> Result<ProviderResponse> {
+            self.snapshots
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .push(messages.to_vec());
+
+            let current_call = {
+                let mut guard = self
+                    .call_count
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                *guard += 1;
+                *guard
+            };
+
+            let response = match self.mode {
+                MockMode::EventualSuccess => match current_call {
+                    1 => ProviderResponse::ToolCalls(vec![ToolCall {
+                        id: "call-1".to_string(),
+                        name: "shell".to_string(),
+                        arguments: json!({ "command": "whois typora.io" }),
+                    }]),
+                    2 => ProviderResponse::Text("Could not finish yet.".to_string()),
+                    3 => ProviderResponse::ToolCalls(vec![ToolCall {
+                        id: "call-2".to_string(),
+                        name: "web_search".to_string(),
+                        arguments: json!({ "query": "whois typora.io" }),
+                    }]),
+                    _ => ProviderResponse::Text("Resolved after fallback.".to_string()),
+                },
+                MockMode::NeverRecovers => match current_call {
+                    1 => ProviderResponse::ToolCalls(vec![ToolCall {
+                        id: "call-1".to_string(),
+                        name: "shell".to_string(),
+                        arguments: json!({ "command": "whois typora.io" }),
+                    }]),
+                    _ => ProviderResponse::Text("Still unable to complete.".to_string()),
+                },
+            };
+            Ok(response)
+        }
+    }
+
+    struct MockShellTool;
+
+    impl Tool for MockShellTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "shell".to_string(),
+                description: "mock shell".to_string(),
+                parameters: json!({ "type": "object" }),
+                permission: Permission::Allow,
+            }
+        }
+
+        fn execute(&self, _args: &Value) -> Result<String> {
+            anyhow::bail!("[stderr] sh: 1: whois: not found")
+        }
+
+        fn match_target(&self, args: &Value) -> String {
+            args["command"].as_str().unwrap_or("").to_string()
+        }
+    }
+
+    struct MockWebSearchTool;
+
+    impl Tool for MockWebSearchTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "web_search".to_string(),
+                description: "mock web search".to_string(),
+                parameters: json!({ "type": "object" }),
+                permission: Permission::Allow,
+            }
+        }
+
+        fn execute(&self, _args: &Value) -> Result<String> {
+            Ok("Mock web result".to_string())
+        }
+
+        fn match_target(&self, args: &Value) -> String {
+            args["query"].as_str().unwrap_or("").to_string()
+        }
+    }
+
+    #[tokio::test]
+    async fn retries_after_tool_failure_until_success() {
+        let (provider, call_count, snapshots) = MockProvider::new(MockMode::EventualSuccess);
+        let mut agent = Agent::new(
+            Box::new(provider),
+            "mock-model".to_string(),
+            vec![Box::new(MockShellTool), Box::new(MockWebSearchTool)],
+            AgentConfig {
+                auto_approve: true,
+                max_iterations: 6,
+                ..Default::default()
+            },
+        );
+
+        let output = agent
+            .run("whois typora.io")
+            .await
+            .expect("agent should eventually recover");
+
+        assert_eq!(output, "Resolved after fallback.");
+        let calls = *call_count
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        assert_eq!(calls, 4, "agent should continue after failed tool calls");
+
+        let recorded = snapshots
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let second_request_messages = &recorded[1];
+        let has_failure_followup = second_request_messages.iter().any(|message| {
+            matches!(
+                message,
+                Message::User { content } if content.contains("[Tool execution update]")
+            )
+        });
+        assert!(
+            has_failure_followup,
+            "agent should append failure follow-up before retrying"
+        );
+    }
+
+    #[tokio::test]
+    async fn fails_with_iteration_limit_when_tools_never_recover() {
+        let (provider, call_count, _snapshots) = MockProvider::new(MockMode::NeverRecovers);
+        let mut agent = Agent::new(
+            Box::new(provider),
+            "mock-model".to_string(),
+            vec![Box::new(MockShellTool)],
+            AgentConfig {
+                auto_approve: true,
+                max_iterations: 3,
+                ..Default::default()
+            },
+        );
+
+        let error = agent
+            .run("whois typora.io")
+            .await
+            .expect_err("agent should stop at iteration limit");
+        assert!(
+            error
+                .to_string()
+                .contains("Agent loop reached maximum iterations"),
+            "unexpected error: {}",
+            error
+        );
+        let calls = *call_count
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        assert_eq!(calls, 3);
+    }
 }
