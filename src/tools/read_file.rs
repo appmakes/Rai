@@ -3,6 +3,7 @@ use crate::permission::Permission;
 use anyhow::Result;
 use serde_json::{json, Value};
 
+use crate::tools::path_security::ensure_not_system_critical_path;
 use crate::tools::utils::truncate_output;
 
 pub struct ReadFileTool;
@@ -30,6 +31,7 @@ impl Tool for ReadFileTool {
         let path = args["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
+        ensure_not_system_critical_path(path)?;
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read file '{}': {}", path, e))?;
         Ok(truncate_output(&content))

@@ -3,6 +3,8 @@ use crate::permission::Permission;
 use anyhow::Result;
 use serde_json::{json, Value};
 
+use crate::tools::path_security::ensure_not_system_critical_path;
+
 pub struct ListDirTool;
 
 impl Tool for ListDirTool {
@@ -26,6 +28,7 @@ impl Tool for ListDirTool {
 
     fn execute(&self, args: &Value) -> Result<String> {
         let path = args["path"].as_str().unwrap_or(".");
+        ensure_not_system_critical_path(path)?;
         let entries = std::fs::read_dir(path)
             .map_err(|e| anyhow::anyhow!("Failed to list directory '{}': {}", path, e))?;
 

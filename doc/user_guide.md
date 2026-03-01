@@ -128,6 +128,17 @@ Rai now includes additional tool names compatible with `nullclaw` workflows:
 
 These are available to the agent automatically during `rai run`.
 
+### 4.9 Path Safety Guardrails (Unix)
+For filesystem-related tools (`read_file`, `write_file`, `file_read`, `file_write`, `file_append`, `file_edit`, `list_dir`, and git path operations), Rai always blocks system-critical Unix prefixes:
+
+- `/System`, `/Library`
+- `/bin`, `/sbin`
+- `/usr/bin`, `/usr/sbin`, `/usr/lib`, `/usr/libexec`
+- `/etc`, `/private/etc`, `/private/var`
+- `/dev`, `/boot`, `/proc`, `/sys`
+
+These prefixes are hard-blocked for safety.
+
 ## 5. Profiles
 
 Rai supports multiple profiles.

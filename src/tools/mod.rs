@@ -6,6 +6,7 @@ pub mod git_operations;
 pub mod http_get;
 pub mod http_request;
 pub mod list_dir;
+pub mod path_security;
 pub mod read_file;
 pub mod shell;
 pub mod utils;

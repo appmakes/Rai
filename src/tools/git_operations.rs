@@ -2,8 +2,12 @@ use super::{Tool, ToolDefinition};
 use crate::permission::Permission;
 use anyhow::Result;
 use serde_json::{json, Value};
+use std::path::Path;
 use std::process::Command;
 
+use crate::tools::path_security::{
+    ensure_not_system_critical_path, ensure_not_system_critical_path_with_base,
+};
 use crate::tools::utils::truncate_output;
 
 pub struct GitOperationsTool;
@@ -78,6 +82,7 @@ impl Tool for GitOperationsTool {
             if path.is_empty() || !std::path::Path::new(path).is_absolute() {
                 anyhow::bail!("cwd must be an absolute path");
             }
+            ensure_not_system_critical_path(path)?;
         }
 
         match operation {
@@ -180,6 +185,7 @@ fn run_git_operation(cwd: Option<&str>, args: &[&str]) -> Result<String> {
 fn git_diff(cwd: Option<&str>, args: &Value) -> Result<String> {
     let cached = args["cached"].as_bool().unwrap_or(false);
     let files = args["files"].as_str().unwrap_or(".");
+    enforce_git_path_tokens(files, cwd)?;
 
     let mut cmd_args = vec!["diff".to_string(), "--unified=3".to_string()];
     if cached {
@@ -265,6 +271,9 @@ fn git_add(cwd: Option<&str>, args: &Value) -> Result<String> {
     let split_paths = paths.split_whitespace().collect::<Vec<_>>();
     if split_paths.is_empty() {
         anyhow::bail!("No paths provided for add");
+    }
+    for path in &split_paths {
+        ensure_not_system_critical_path_with_base(path, cwd.map(Path::new))?;
     }
 
     let mut cmd_args = vec!["add".to_string(), "--".to_string()];
@@ -355,9 +364,23 @@ fn truncate_utf8(input: &str, max_bytes: usize) -> &str {
     &input[..idx]
 }
 
+fn enforce_git_path_tokens(raw_paths: &str, cwd: Option<&str>) -> Result<()> {
+    let tokens = raw_paths
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    if tokens.is_empty() {
+        anyhow::bail!("No paths provided");
+    }
+    for token in tokens {
+        ensure_not_system_critical_path_with_base(token, cwd.map(Path::new))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::sanitize_git_arg;
+    use super::{enforce_git_path_tokens, sanitize_git_arg};
 
     #[test]
     fn git_arg_sanitizer_blocks_dangerous_patterns() {
@@ -366,5 +389,18 @@ mod tests {
         assert!(!sanitize_git_arg("arg; rm -rf /"));
         assert!(sanitize_git_arg("--cached"));
         assert!(sanitize_git_arg("feature/test"));
+    }
+
+    #[test]
+    fn git_path_tokens_block_system_critical_prefixes() {
+        if !cfg!(unix) {
+            return;
+        }
+        assert!(enforce_git_path_tokens("/etc/passwd", None).is_err());
+    }
+
+    #[test]
+    fn git_path_tokens_allow_non_system_relative_paths() {
+        assert!(enforce_git_path_tokens("src", Some("/workspace")).is_ok());
     }
 }
