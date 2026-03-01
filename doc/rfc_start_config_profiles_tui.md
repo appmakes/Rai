@@ -43,23 +43,21 @@ This document proposes UX, config schema, command surface, migration, and phased
 Purpose: opinionated onboarding wizard for first setup (or quick reset/setup of a profile).
 
 ### Interactive flow (proposed)
+First-time path is intentionally minimal:
 1. Welcome + quick explanation.
-2. Profile choice:
-   - Create/select profile (default suggestion: `default`).
-3. Provider selection.
-4. API key setup (keyring preferred).
-5. Model selection:
-   - Popular presets + custom entry.
-6. Tool behavior selection:
-   - `ask` / `ask_once` / `allow` / `deny` presets.
-7. Confirm summary.
-8. Save and print "next commands".
+2. Provider selection.
+3. API key setup (keyring preferred).
+4. Model selection (preset + custom).
+5. Save + "next commands" summary.
+6. Prompt: `Continue` (default) or `More settings`.
+   - `Continue`: exit `start`.
+   - `More settings`: open `rai config` menu hub.
 
 ### Example
 - `rai start`
 - `rai start --profile hard-task`
 
-If profile exists and user targets it, prompt for overwrite/edit.
+For first-time use, default target profile is `default`.
 
 ---
 
@@ -117,8 +115,18 @@ If none resolves, fail with actionable guidance (`rai start`).
 config_version = 2
 default_profile = "default"
 active_profile = "default"
+```
 
-[profiles.default]
+Global file: `~/.config/rai/config.toml`
+
+Each profile has its own file:
+- `~/.config/rai/config.default.toml`
+- `~/.config/rai/config.hard-task.toml`
+- `~/.config/rai/config.quick-task.toml`
+
+Example profile file (`config.default.toml`):
+
+```toml
 providers = ["poe"]
 default_provider = "poe"
 default_model = "gpt-4o"
@@ -127,7 +135,7 @@ no_tools = false
 auto_approve = false
 ```
 
-Profile fields are extensible for future settings.
+Profile fields remain extensible for future settings.
 
 ## 4.2 Backward compatibility
 
@@ -138,11 +146,11 @@ Legacy fields currently used:
 - `default_model`
 
 Migration plan:
-1. On load, detect absence of `profiles`.
-2. Create `profiles.default` using current effective values.
-3. Set `default_profile = "default"` and `active_profile = "default"`.
+1. On load, detect legacy single-file config fields.
+2. Create `config.default.toml` using current effective values.
+3. Set global `default_profile = "default"` and `active_profile = "default"`.
 4. Preserve legacy read support for a transition window.
-5. Write back v2 shape on save.
+5. Write split-file layout on next save.
 
 ## 4.3 API key scoping with profiles
 
@@ -188,30 +196,29 @@ If no usable config/profile exists:
 
 ## 6) TUI modernization plan (item 4)
 
-Bubble Tea is Go-native; for Rust, recommended stack is:
-- `ratatui` + `crossterm` + optional `tui-input`.
+Bubble Tea is a visual benchmark; Rai should keep the command-line interaction model and modernize prompts without full-screen rendering.
 
 ## 6.1 UX target
-- Full-screen panels with:
-  - title/header
-  - step indicator
-  - key hints (`↑/↓`, `Enter`, `Esc`)
-  - highlighted selections
-  - consistent color theme
-- Shared component system for `start`, `config`, and `profile` flows.
+- Keep Rai a command-line tool (not a full-screen terminal application).
+- Use compact, lightweight modernized prompts:
+  - short section headers
+  - clear defaults
+  - better spacing/color hints
+  - consistent key hints (`↑/↓`, `Enter`, `Esc`)
+- Shared prompt style for `start`, `config`, and `profile` flows.
 
 ## 6.2 Architecture (proposed)
-- New module `src/tui/`:
-  - `app.rs` (state machine)
-  - `theme.rs` (colors/styles)
-  - `screens/` (provider, model, tools, profile)
-  - `widgets/` (menu list, footer hints, summary cards)
+- Keep current command-line interaction model and avoid full-screen mode.
+- Introduce small UI helpers for:
+  - themed headers,
+  - compact menu wrappers,
+  - standardized confirm/summary blocks.
 - Graceful fallback:
   - non-TTY/CI -> existing non-interactive errors (unchanged).
 
 ## 6.3 Scope split
 - Phase A: improve onboarding/config/profile flows first.
-- Phase B: extend style system across other interactive flows (`create`, `plan` interactive path).
+- Phase B: apply same lightweight style to other interactive flows (`create`, `plan` interactive path).
 
 ---
 
@@ -266,5 +273,5 @@ Bubble Tea is Go-native; for Rust, recommended stack is:
 2. Should new profile creation default to cloning current profile settings?
 3. Should deleting active/default profile be blocked unless reassigned first? (recommended: yes)
 4. Should profile-specific tool policy be enforced at run time now, or staged in phase 2?
-5. TUI library decision: approve `ratatui + crossterm` as the Bubble Tea-style Rust equivalent?
+5. Prompt styling depth: should we keep plain `dialoguer` + lightweight ANSI styling, or add a small helper crate for richer prompt theming?
 

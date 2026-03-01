@@ -16,16 +16,19 @@
 The binary is at `target/debug/rai` (debug) or `target/release/rai` (release).
 
 Key commands:
+- `rai start` — first-time setup wizard
 - `rai run "prompt"` — ad-hoc AI query
 - `rai run task.md` — file-based task execution
 - `rai run task.md --subtask security arg1` — sub-task with arguments
 - `rai plan task.md` — preview task structure and variables
 - `rai create output.md` — interactive task file wizard
-- `rai config` — interactive provider/model configuration
+- `rai config` — configuration hub (provider/tools/model/profile sections)
+- `rai profile list` — list and manage profiles
 
 ### Configuration
 
-- Config file: `~/.config/rai/config.toml` (fields: `providers`, `default_provider`, `default_model`; legacy `provider` is still read)
+- Global config file: `~/.config/rai/config.toml` (e.g., `default_profile`, `active_profile`)
+- Profile config files: `~/.config/rai/config.<profile>.toml` (e.g., `providers`, `default_provider`, `default_model`, tool defaults)
 - API key resolution order: `RAI_API_KEY` env var → provider-specific env var (e.g. `POE_API_KEY`) → OS keyring
 - Only the `poe` provider is implemented; set `providers = ["poe"]` and `default_provider = "poe"` in config
 - The `keyring` crate requires `libdbus-1-dev` on Linux (system dependency)

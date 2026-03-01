@@ -22,7 +22,12 @@ fn integration_test_home() -> &'static PathBuf {
             .expect("failed to create integration-test config directory");
         fs::write(
             config_dir.join("config.toml"),
-            "providers = [\"poe\"]\ndefault_provider = \"poe\"\ndefault_model = \"gpt-4o\"\n",
+            "default_profile = \"default\"\nactive_profile = \"default\"\n",
+        )
+        .expect("failed to write integration-test global config file");
+        fs::write(
+            config_dir.join("config.default.toml"),
+            "providers = [\"poe\"]\ndefault_provider = \"poe\"\ndefault_model = \"gpt-4o\"\ntool_mode = \"ask\"\nno_tools = false\nauto_approve = false\n",
         )
         .expect("failed to write integration-test config file");
 
@@ -82,6 +87,14 @@ fn test_no_subcommand_shows_help() {
 #[test]
 fn test_config_rejects_ci() {
     let output = rai_bin().arg("config").output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("non-interactive"));
+}
+
+#[test]
+fn test_start_rejects_ci() {
+    let output = rai_bin().arg("start").output().unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("non-interactive"));
@@ -339,6 +352,14 @@ fn test_plan_hint_uses_shorthand() {
         "Plan hint should use shorthand syntax: {}",
         stdout
     );
+}
+
+#[test]
+fn test_profile_list() {
+    let output = rai_bin().args(["profile", "list"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("default"));
 }
 
 #[test]
