@@ -102,6 +102,20 @@ Tip for local dev: when using Cargo, `cargo run` itself prints build/run lines. 
 cargo run -q -- run "weather in Shanghai" --bill
 ```
 
+### 4.7 Nullclaw-compatible Tool Names
+Rai now includes additional tool names compatible with `nullclaw` workflows:
+
+- `file_read`
+- `file_write`
+- `file_append`
+- `file_edit`
+- `http_request`
+- `web_fetch`
+- `web_search`
+- `git_operations`
+
+These are available to the agent automatically during `rai run`.
+
 ## 5. Profiles
 
 Rai supports multiple profiles.
