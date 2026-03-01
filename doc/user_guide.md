@@ -88,13 +88,13 @@ At the end of execution, Rai prints:
 - Input tokens used
 - Output tokens used
 
-### 4.6 Clean vs Detailed Output (`--log`)
+### 4.6 Clean vs Detailed Output (`--detail`)
 By default, `rai run` keeps output short and prints the final answer in your terminal's default text color for readability.
 
-Use `--log` when you want detailed runtime info (tool calls, provider notices):
+Use `--detail` when you want detailed runtime info (tool calls, prompts, provider responses):
 
 ```bash
-rai run "weather in Shanghai" --log
+rai run "weather in Shanghai" --detail
 ```
 
 Tip for local dev: when using Cargo, `cargo run` itself prints build/run lines. Use quiet mode for cleaner output:
@@ -103,7 +103,18 @@ Tip for local dev: when using Cargo, `cargo run` itself prints build/run lines. 
 cargo run -q -- run "weather in Shanghai" --bill
 ```
 
-### 4.7 Nullclaw-compatible Tool Names
+### 4.7 Think Mode (`--think`)
+Use `--think` to request reasoning traces from the provider.
+
+- Rai asks the model to place reasoning in `<think>...</think>`.
+- Rai prints those thinking blocks in gray-style info lines.
+- Final answer still prints as normal result output.
+
+```bash
+rai run "compare rust and go for backend APIs" --think
+```
+
+### 4.8 Nullclaw-compatible Tool Names
 Rai now includes additional tool names compatible with `nullclaw` workflows:
 
 - `file_read`

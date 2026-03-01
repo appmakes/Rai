@@ -102,13 +102,15 @@ The summary includes:
 - Input tokens
 - Output tokens
 
-For detailed runtime logs (tool calls/provider notices), add `--log`:
+For detailed runtime logs (tool calls/prompts/provider responses), add `--detail`:
 
 ```bash
-rai run "whois google.com" --bill --log
+rai run "weather in Shanghai" --bill --detail
 ```
 
 By default, Rai keeps `run` output concise and prints the final answer in your terminal's default text color.
+
+Use `--think` to ask the model for a reasoning trace. Rai requests `<think>...</think>` blocks and renders them as low-contrast info text before the final answer.
 
 Common tool-driven prompts:
 

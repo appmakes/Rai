@@ -2,8 +2,10 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser, Subcommand};
 use config::Config;
 use dialoguer::{Confirm, Input, Select};
+use regex::Regex;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -78,9 +80,13 @@ struct Cli {
     #[arg(long, global = true)]
     bill: bool,
 
-    /// Show detailed runtime logs (tool calls, provider notices)
+    /// Show detailed runtime logs (tool calls, prompts, provider responses)
+    #[arg(long, alias = "log", global = true)]
+    detail: bool,
+
+    /// Ask provider to include thinking chain and display it
     #[arg(long, global = true)]
-    log: bool,
+    think: bool,
 
     /// Select configuration profile
     #[arg(long, global = true)]
@@ -309,7 +315,8 @@ struct ExecutionOptions<'a> {
     profile_override: Option<&'a str>,
     cli_no_tools: bool,
     cli_auto_approve: bool,
-    log_enabled: bool,
+    detail_enabled: bool,
+    think_enabled: bool,
 }
 
 fn execution_options_from_cli(cli: &Cli) -> ExecutionOptions<'_> {
@@ -318,7 +325,8 @@ fn execution_options_from_cli(cli: &Cli) -> ExecutionOptions<'_> {
         profile_override: cli.profile.as_deref(),
         cli_no_tools: cli.no_tools,
         cli_auto_approve: cli.yes,
-        log_enabled: cli.log,
+        detail_enabled: cli.detail,
+        think_enabled: cli.think,
     }
 }
 
@@ -340,7 +348,7 @@ async fn handle_run(
             Ok(None) => {}
             Err(err) => {
                 direct_tool_failure = Some(err.to_string());
-                if opts.log_enabled {
+                if opts.detail_enabled {
                     print_info("Direct tool attempt failed; asking AI for fallback.");
                 }
             }
@@ -450,19 +458,25 @@ async fn handle_run(
         let builtin = tools::builtin_tools();
         let agent_config = agent::AgentConfig {
             auto_approve,
-            log_enabled: opts.log_enabled,
+            detail_enabled: opts.detail_enabled,
+            think_enabled: opts.think_enabled,
             ..Default::default()
         };
         let mut agent_loop = agent::Agent::new(provider_impl, model, builtin, agent_config);
 
         let response = agent_loop.run(&prompt).await?;
-        print_result(&response);
+        print_processed_response(&response, opts.think_enabled);
     } else {
-        if opts.log_enabled {
+        let provider_prompt = apply_think_mode_prompt(prompt, opts.think_enabled);
+        if opts.detail_enabled {
             print_info(&format!("Sending request to {}...", config.provider));
+            print_detail_prompt(&provider_prompt);
         }
-        let response = provider_impl.chat(&model, &prompt).await?;
-        print_result(&response);
+        let response = provider_impl.chat(&model, &provider_prompt).await?;
+        if opts.detail_enabled {
+            print_detail_response(&response);
+        }
+        print_processed_response(&response, opts.think_enabled);
     }
 
     Ok(())
@@ -570,6 +584,9 @@ fn print_section(title: &str) {
 enum Style {
     Reset,
     Info,
+    DetailPrompt,
+    DetailResponse,
+    Thinking,
     Billing,
 }
 
@@ -584,6 +601,9 @@ fn style_code(style: Style) -> &'static str {
     match style {
         Style::Reset => "\x1b[0m",
         Style::Info => "\x1b[36m",
+        Style::DetailPrompt => "\x1b[34m",
+        Style::DetailResponse => "\x1b[33m",
+        Style::Thinking => "\x1b[90m",
         Style::Billing => "\x1b[35m",
     }
 }
@@ -599,6 +619,82 @@ fn print_info(message: &str) {
 
 fn print_result(message: &str) {
     println!("{}", message);
+}
+
+fn print_detail_prompt(message: &str) {
+    println!(
+        "{}[detail][prompt]{} {}",
+        style_code(Style::DetailPrompt),
+        style_code(Style::Reset),
+        message
+    );
+}
+
+fn print_detail_response(message: &str) {
+    println!(
+        "{}[detail][response]{} {}",
+        style_code(Style::DetailResponse),
+        style_code(Style::Reset),
+        message
+    );
+}
+
+fn print_thinking(message: &str) {
+    println!(
+        "{}[thinking]{} {}",
+        style_code(Style::Thinking),
+        style_code(Style::Reset),
+        message
+    );
+}
+
+fn apply_think_mode_prompt(base_prompt: String, think_enabled: bool) -> String {
+    if !think_enabled {
+        return base_prompt;
+    }
+    format!(
+        "{}\n\n[Think mode]\nBefore your final answer, include your reasoning chain inside <think>...</think> and then provide a concise final answer.",
+        base_prompt
+    )
+}
+
+fn extract_thinking_blocks(response: &str) -> (Vec<String>, String) {
+    static THINK_RE: OnceLock<Regex> = OnceLock::new();
+    let think_re = THINK_RE
+        .get_or_init(|| Regex::new(r"(?is)<think>(.*?)</think>").expect("valid think regex"));
+
+    let thoughts = think_re
+        .captures_iter(response)
+        .filter_map(|capture| capture.get(1).map(|m| m.as_str().trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+
+    let cleaned = think_re.replace_all(response, "").to_string();
+    (thoughts, cleaned)
+}
+
+fn print_processed_response(response: &str, think_enabled: bool) {
+    let (thoughts, cleaned) = extract_thinking_blocks(response);
+    if think_enabled {
+        if thoughts.is_empty() {
+            print_thinking("No thinking chain returned by provider.");
+        } else {
+            for thought in thoughts {
+                print_thinking(&thought);
+            }
+        }
+    }
+
+    let candidate = if thoughts.is_empty() {
+        response.trim()
+    } else {
+        cleaned.trim()
+    };
+    if candidate.is_empty() {
+        print_result(response.trim());
+    } else {
+        print_result(candidate);
+    }
 }
 
 fn try_handle_direct_prompt(task: &str) -> anyhow::Result<Option<String>> {
@@ -1319,8 +1415,8 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_direct_tool_failure_note, compose_adhoc_prompt, ensure_non_empty_piped_stdin,
-        parse_shorthand_args, PipedStdin,
+        append_direct_tool_failure_note, apply_think_mode_prompt, compose_adhoc_prompt,
+        ensure_non_empty_piped_stdin, extract_thinking_blocks, parse_shorthand_args, PipedStdin,
     };
 
     #[test]
@@ -1385,5 +1481,20 @@ mod tests {
     fn test_non_empty_piped_stdin_passes_validation() {
         let result = ensure_non_empty_piped_stdin(&PipedStdin::Content("text".to_string()));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_apply_think_mode_prompt_adds_instruction_when_enabled() {
+        let prompt = apply_think_mode_prompt("Explain Rust ownership".to_string(), true);
+        assert!(prompt.contains("[Think mode]"));
+        assert!(prompt.contains("<think>...</think>"));
+    }
+
+    #[test]
+    fn test_extract_thinking_blocks_splits_reasoning_and_final_answer() {
+        let response = "<think>step 1\nstep 2</think>\nFinal answer";
+        let (thoughts, cleaned) = extract_thinking_blocks(response);
+        assert_eq!(thoughts, vec!["step 1\nstep 2".to_string()]);
+        assert_eq!(cleaned.trim(), "Final answer");
     }
 }
