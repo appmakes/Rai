@@ -4,6 +4,7 @@ use crate::tools::{Tool, ToolCall, ToolDefinition};
 use anyhow::Result;
 use dialoguer::{Input, Select};
 use std::collections::HashMap;
+use std::process::Command;
 use tracing::info;
 
 const DEFAULT_MAX_ITERATIONS: usize = 10;
@@ -257,6 +258,22 @@ Do not stop yet.",
         tool_idx: usize,
     ) -> Result<crate::tools::ToolResult> {
         let match_target = self.tools[tool_idx].match_target(&tc.arguments);
+
+        if tc.name == "shell" {
+            if let Some(missing_cmd) = find_missing_shell_executable(&tc.arguments) {
+                if self.config.detail_enabled {
+                    eprintln!(
+                        "[rai] {}: {}  ✗ (command not found: {})",
+                        tc.name, match_target, missing_cmd
+                    );
+                }
+                return Ok(crate::tools::ToolResult {
+                    tool_call_id: tc.id.clone(),
+                    output: format!("[stderr] sh: 1: {}: not found", missing_cmd),
+                    success: false,
+                });
+            }
+        }
 
         if !atty::is(atty::Stream::Stdin) {
             if self.config.detail_enabled {
@@ -600,11 +617,92 @@ fn is_success_status(status: Option<AssistantStatus>) -> bool {
     )
 }
 
+fn find_missing_shell_executable(arguments: &serde_json::Value) -> Option<String> {
+    let command = arguments.get("command")?.as_str()?;
+    let executable = extract_shell_executable(command)?;
+    if executable.is_empty() {
+        return None;
+    }
+
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg("command -v \"$1\" >/dev/null 2>&1")
+        .arg("sh")
+        .arg(&executable)
+        .status()
+        .ok()?;
+    if status.success() {
+        None
+    } else {
+        Some(executable)
+    }
+}
+
+fn extract_shell_executable(command: &str) -> Option<String> {
+    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return None;
+    }
+    let mut index = 0usize;
+
+    while index < tokens.len() && looks_like_env_assignment(tokens[index]) {
+        index += 1;
+    }
+    if index >= tokens.len() {
+        return None;
+    }
+
+    match tokens[index] {
+        "sudo" => {
+            index += 1;
+            while index < tokens.len() && tokens[index].starts_with('-') {
+                index += 1;
+            }
+        }
+        "env" => {
+            index += 1;
+            while index < tokens.len()
+                && (tokens[index].starts_with('-') || looks_like_env_assignment(tokens[index]))
+            {
+                index += 1;
+            }
+        }
+        "command" => {
+            index += 1;
+            while index < tokens.len() && tokens[index].starts_with('-') {
+                index += 1;
+            }
+        }
+        "nohup" => {
+            index += 1;
+        }
+        "time" => {
+            index += 1;
+            while index < tokens.len() && tokens[index].starts_with('-') {
+                index += 1;
+            }
+        }
+        _ => {}
+    }
+    tokens.get(index).map(|value| value.to_string())
+}
+
+fn looks_like_env_assignment(token: &str) -> bool {
+    let Some((key, _value)) = token.split_once('=') else {
+        return false;
+    };
+    !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_assistant_status, Agent, AgentConfig, AssistantStatus};
+    use super::{
+        extract_shell_executable, find_missing_shell_executable, parse_assistant_status, Agent,
+        AgentConfig, AssistantStatus,
+    };
     use crate::permission::Permission;
     use crate::providers::{Message, Provider, ProviderResponse};
+    use crate::tools::shell::ShellTool;
     use crate::tools::{Tool, ToolCall, ToolDefinition};
     use anyhow::Result;
     use async_trait::async_trait;
@@ -850,5 +948,55 @@ mod tests {
             Some(AssistantStatus::FailedButNeedFurtherSteps)
         );
         assert_eq!(parse_assistant_status("No status here"), None);
+    }
+
+    #[test]
+    fn extracts_shell_executable_with_env_and_wrappers() {
+        assert_eq!(
+            extract_shell_executable("FOO=bar env BAR=baz whois google.com").as_deref(),
+            Some("whois")
+        );
+        assert_eq!(
+            extract_shell_executable("sudo -n whois google.com").as_deref(),
+            Some("whois")
+        );
+    }
+
+    #[test]
+    fn missing_shell_command_detection_flags_nonexistent_command() {
+        let missing = find_missing_shell_executable(
+            &json!({ "command": "__rai_cmd_does_not_exist_123456__ --help" }),
+        );
+        assert_eq!(
+            missing.as_deref(),
+            Some("__rai_cmd_does_not_exist_123456__")
+        );
+    }
+
+    #[test]
+    fn shell_missing_command_skips_noninteractive_allow_prompt() {
+        let (provider, _call_count, _snapshots) = MockProvider::new(MockMode::NeverRecovers);
+        let mut agent = Agent::new(
+            Box::new(provider),
+            "mock-model".to_string(),
+            vec![Box::new(ShellTool)],
+            AgentConfig {
+                auto_approve: false,
+                ..Default::default()
+            },
+        );
+
+        let call = ToolCall {
+            id: "shell-missing".to_string(),
+            name: "shell".to_string(),
+            arguments: json!({ "command": "__rai_cmd_does_not_exist_123456__ --help" }),
+        };
+
+        let result = agent
+            .handle_tool_call(&call)
+            .expect("tool call should return result");
+        assert!(!result.success);
+        assert!(result.output.contains("not found"));
+        assert!(!result.output.contains("non-interactive mode"));
     }
 }
