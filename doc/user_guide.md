@@ -99,6 +99,16 @@ rai run "weather in Shanghai" --detail
 
 Detailed provider exchanges are numbered as `request #N` and `response #N`.
 
+Rai asks the model to include a status line in final output:
+
+- `STATUS: success`
+- `STATUS: success_with_warnings`
+- `STATUS: success_but_can_go_deeper`
+- `STATUS: failed_and_end_the_loop`
+- `STATUS: failed_but_need_further_steps`
+
+If the final status is failed (or the response clearly says it could not retrieve required data), Rai exits with a non-zero status code.
+
 Tip for local dev: when using Cargo, `cargo run` itself prints build/run lines. Use quiet mode for cleaner output:
 
 ```bash

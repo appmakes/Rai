@@ -250,6 +250,15 @@ fn compose_adhoc_prompt(task: &str, piped_stdin: Option<&str>) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssistantStatus {
+    Success,
+    SuccessWithWarnings,
+    SuccessButCanGoDeeper,
+    FailedAndEndTheLoop,
+    FailedButNeedFurtherSteps,
+}
+
 #[cfg(test)]
 fn parse_shorthand_args(raw_args: &[String]) -> (Option<String>, Vec<String>) {
     let mut subtask: Option<String> = None;
@@ -437,9 +446,10 @@ async fn handle_run(
         let mut agent_loop = agent::Agent::new(provider_impl, model, builtin, agent_config);
 
         let response = agent_loop.run(&prompt).await?;
-        print_processed_response(&response, opts.think_enabled);
+        print_and_validate_response(&response, opts.think_enabled)?;
     } else {
-        let provider_prompt = apply_think_mode_prompt(prompt, opts.think_enabled);
+        let provider_prompt =
+            apply_think_mode_prompt(apply_status_contract_prompt(prompt), opts.think_enabled);
         if opts.detail_enabled {
             print_info(&format!("Sending request to {}...", config.provider));
             print_detail_prompt(1, &provider_prompt);
@@ -448,7 +458,7 @@ async fn handle_run(
         if opts.detail_enabled {
             print_detail_response(1, &response);
         }
-        print_processed_response(&response, opts.think_enabled);
+        print_and_validate_response(&response, opts.think_enabled)?;
     }
 
     Ok(())
@@ -632,6 +642,13 @@ fn apply_think_mode_prompt(base_prompt: String, think_enabled: bool) -> String {
     )
 }
 
+fn apply_status_contract_prompt(base_prompt: String) -> String {
+    format!(
+        "{}\n\n[Output contract]\nStart your final answer with:\nSTATUS: <value>\nwhere <value> must be exactly one of:\n- success\n- success_with_warnings\n- success_but_can_go_deeper\n- failed_and_end_the_loop\n- failed_but_need_further_steps",
+        base_prompt
+    )
+}
+
 fn extract_thinking_blocks(response: &str) -> (Vec<String>, String) {
     static THINK_RE: OnceLock<Regex> = OnceLock::new();
     let think_re = THINK_RE
@@ -669,6 +686,75 @@ fn print_processed_response(response: &str, think_enabled: bool) {
         print_result(response.trim());
     } else {
         print_result(candidate);
+    }
+}
+
+fn parse_assistant_status(response: &str) -> Option<AssistantStatus> {
+    let (_, cleaned) = extract_thinking_blocks(response);
+    for line in cleaned.lines().take(12) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((label, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if !label.trim().eq_ignore_ascii_case("status") {
+            continue;
+        }
+        let normalized = value.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+        let status = match normalized.as_str() {
+            "success" => AssistantStatus::Success,
+            "success_with_warnings" => AssistantStatus::SuccessWithWarnings,
+            "success_but_can_go_deeper" => AssistantStatus::SuccessButCanGoDeeper,
+            "failed_and_end_the_loop" => AssistantStatus::FailedAndEndTheLoop,
+            "failed_but_need_further_steps" => AssistantStatus::FailedButNeedFurtherSteps,
+            _ => continue,
+        };
+        return Some(status);
+    }
+    None
+}
+
+fn response_has_failure_language(response: &str) -> bool {
+    let (_, cleaned) = extract_thinking_blocks(response);
+    let lowercase = cleaned.to_ascii_lowercase();
+    [
+        "i couldn't retrieve",
+        "i could not retrieve",
+        "i was unable to retrieve",
+        "unable to retrieve",
+        "i couldn't access",
+        "i could not access",
+        "unable to access",
+        "failed to retrieve",
+        "failed to access",
+        "unable to complete this request",
+    ]
+    .iter()
+    .any(|needle| lowercase.contains(needle))
+}
+
+fn print_and_validate_response(response: &str, think_enabled: bool) -> anyhow::Result<()> {
+    print_processed_response(response, think_enabled);
+    match parse_assistant_status(response) {
+        Some(AssistantStatus::Success)
+        | Some(AssistantStatus::SuccessWithWarnings)
+        | Some(AssistantStatus::SuccessButCanGoDeeper) => Ok(()),
+        Some(AssistantStatus::FailedAndEndTheLoop) => anyhow::bail!(
+            "Assistant reported failed_and_end_the_loop. Returning non-zero exit code."
+        ),
+        Some(AssistantStatus::FailedButNeedFurtherSteps) => anyhow::bail!(
+            "Assistant reported failed_but_need_further_steps but request was not completed. Returning non-zero exit code."
+        ),
+        None => {
+            if response_has_failure_language(response) {
+                anyhow::bail!(
+                    "Assistant response indicates failure without a success status. Returning non-zero exit code."
+                );
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1371,8 +1457,9 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_think_mode_prompt, compose_adhoc_prompt, ensure_non_empty_piped_stdin,
-        extract_thinking_blocks, parse_shorthand_args, Cli, PipedStdin,
+        apply_status_contract_prompt, apply_think_mode_prompt, compose_adhoc_prompt,
+        ensure_non_empty_piped_stdin, extract_thinking_blocks, parse_assistant_status,
+        parse_shorthand_args, response_has_failure_language, AssistantStatus, Cli, PipedStdin,
     };
     use clap::Parser;
 
@@ -1430,11 +1517,43 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_status_contract_prompt_adds_status_requirements() {
+        let prompt = apply_status_contract_prompt("Solve this".to_string());
+        assert!(prompt.contains("[Output contract]"));
+        assert!(prompt.contains("failed_and_end_the_loop"));
+        assert!(prompt.contains("success_but_can_go_deeper"));
+    }
+
+    #[test]
     fn test_extract_thinking_blocks_splits_reasoning_and_final_answer() {
         let response = "<think>step 1\nstep 2</think>\nFinal answer";
         let (thoughts, cleaned) = extract_thinking_blocks(response);
         assert_eq!(thoughts, vec!["step 1\nstep 2".to_string()]);
         assert_eq!(cleaned.trim(), "Final answer");
+    }
+
+    #[test]
+    fn test_parse_assistant_status_from_response() {
+        let response = "STATUS: success_with_warnings\nDone.";
+        assert_eq!(
+            parse_assistant_status(response),
+            Some(AssistantStatus::SuccessWithWarnings)
+        );
+    }
+
+    #[test]
+    fn test_parse_assistant_status_ignores_think_block() {
+        let response = "<think>draft</think>\nSTATUS: failed_but_need_further_steps\nRetry";
+        assert_eq!(
+            parse_assistant_status(response),
+            Some(AssistantStatus::FailedButNeedFurtherSteps)
+        );
+    }
+
+    #[test]
+    fn test_failure_language_detection_for_inability_reply() {
+        let response = "I couldn't retrieve the current weather for Shanghai.";
+        assert!(response_has_failure_language(response));
     }
 
     #[test]
