@@ -97,6 +97,8 @@ Use `--detail` when you want detailed runtime info (tool calls, prompts, provide
 rai run "weather in Shanghai" --detail
 ```
 
+Detailed provider exchanges are numbered as `request #N` and `response #N`.
+
 Tip for local dev: when using Cargo, `cargo run` itself prints build/run lines. Use quiet mode for cleaner output:
 
 ```bash
