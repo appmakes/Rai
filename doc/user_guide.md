@@ -52,6 +52,7 @@ rai run "weather in Shanghai"
 ```
 
 If a direct built-in lookup fails (for example network issues), Rai falls back to the AI agent to choose alternative tools/sources and continue toward a final answer.
+When the model returns a recoverable terminal `fail` after tool usage (for example fetched page too noisy/large), Rai now injects retry guidance and asks it to try alternate sources before exiting.
 
 ### 4.2 File-based Tasks
 For more complex or reusable workflows, define your task in a Markdown file (e.g., `task.md`) and run it:
@@ -106,7 +107,8 @@ Rai uses internal model statuses and shows a user-facing final state line:
 - `success`
 - `fail`
 
-If the result is `fail` (including inability replies), Rai exits with a non-zero status code.
+If the final result is `fail` (including inability replies), Rai exits with a non-zero status code.
+Before surfacing that final `fail`, Rai gives the model a bounded retry budget to recover from tool-driven extraction failures (for example by choosing another URL).
 
 Tip for local dev: when using Cargo, `cargo run` itself prints build/run lines. Use quiet mode for cleaner output:
 
