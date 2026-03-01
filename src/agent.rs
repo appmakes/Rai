@@ -8,6 +8,15 @@ use tracing::info;
 
 const DEFAULT_MAX_ITERATIONS: usize = 10;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssistantStatus {
+    Success,
+    SuccessWithWarnings,
+    SuccessButCanGoDeeper,
+    FailedAndEndTheLoop,
+    FailedButNeedFurtherSteps,
+}
+
 pub struct AgentConfig {
     pub auto_approve: bool,
     pub max_iterations: usize,
@@ -87,6 +96,16 @@ impl Agent {
                 ProviderResponse::Text(text) => {
                     if self.config.detail_enabled {
                         print_detail_response(request_number, &text);
+                    }
+                    let status = parse_assistant_status(&text);
+                    if matches!(status, Some(AssistantStatus::FailedButNeedFurtherSteps)) {
+                        pending_retry_after_failure = true;
+                        messages.push(Message::user(
+                            "[Retry required]\nYou reported `failed_but_need_further_steps`.\n\
+Continue executing additional steps/tools to fulfill the original request. \
+Do not stop yet.",
+                        ));
+                        continue;
                     }
                     if pending_retry_after_failure {
                         messages.push(Message::user(&build_retry_after_failed_text_response(
@@ -394,6 +413,13 @@ fn build_system_prompt(think_enabled: bool) -> String {
     } else {
         ""
     };
+    let status_rule = r#"- Final response contract: start your final answer with
+  `STATUS: <value>` where value is exactly one of:
+  `success`, `success_with_warnings`, `success_but_can_go_deeper`,
+  `failed_and_end_the_loop`, `failed_but_need_further_steps`.
+- If required data is still missing but additional attempts are possible, use
+  `failed_but_need_further_steps` and continue tool-based attempts.
+- Use `failed_and_end_the_loop` only when you truly cannot proceed further."#;
 
     format!(
         r#"You are Rai, a CLI assistant with access to tools.
@@ -409,11 +435,12 @@ Rules:
 - If a tool call is rejected, explain what you needed and suggest alternatives.
 - Keep tool usage minimal — only call tools when necessary.
 {}
+{}
 
 Environment:
 - OS: {}
 - Working directory: {}"#,
-        think_rule, os, cwd
+        think_rule, status_rule, os, cwd
     )
 }
 
@@ -531,9 +558,38 @@ fn truncate_for_retry_note(input: &str, max_chars: usize) -> String {
     input.chars().take(max_chars).collect::<String>() + "..."
 }
 
+fn parse_assistant_status(text: &str) -> Option<AssistantStatus> {
+    for line in text.lines().take(12) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((label, raw_value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if !label.trim().eq_ignore_ascii_case("status") {
+            continue;
+        }
+        let normalized = raw_value
+            .trim()
+            .to_ascii_lowercase()
+            .replace([' ', '-'], "_");
+        let status = match normalized.as_str() {
+            "success" => AssistantStatus::Success,
+            "success_with_warnings" => AssistantStatus::SuccessWithWarnings,
+            "success_but_can_go_deeper" => AssistantStatus::SuccessButCanGoDeeper,
+            "failed_and_end_the_loop" => AssistantStatus::FailedAndEndTheLoop,
+            "failed_but_need_further_steps" => AssistantStatus::FailedButNeedFurtherSteps,
+            _ => continue,
+        };
+        return Some(status);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Agent, AgentConfig};
+    use super::{parse_assistant_status, Agent, AgentConfig, AssistantStatus};
     use crate::permission::Permission;
     use crate::providers::{Message, Provider, ProviderResponse};
     use crate::tools::{Tool, ToolCall, ToolDefinition};
@@ -546,6 +602,7 @@ mod tests {
     enum MockMode {
         EventualSuccess,
         NeverRecovers,
+        StatusDrivenRetry,
     }
 
     struct MockProvider {
@@ -618,6 +675,12 @@ mod tests {
                         arguments: json!({ "command": "whois typora.io" }),
                     }]),
                     _ => ProviderResponse::Text("Still unable to complete.".to_string()),
+                },
+                MockMode::StatusDrivenRetry => match current_call {
+                    1 => ProviderResponse::Text(
+                        "STATUS: failed_but_need_further_steps\nNeed one more try.".to_string(),
+                    ),
+                    _ => ProviderResponse::Text("STATUS: success\nDone.".to_string()),
                 },
             };
             Ok(response)
@@ -736,5 +799,43 @@ mod tests {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         assert_eq!(calls, 3);
+    }
+
+    #[tokio::test]
+    async fn retries_when_model_reports_failed_but_need_further_steps() {
+        let (provider, call_count, _snapshots) = MockProvider::new(MockMode::StatusDrivenRetry);
+        let mut agent = Agent::new(
+            Box::new(provider),
+            "mock-model".to_string(),
+            vec![Box::new(MockWebSearchTool)],
+            AgentConfig {
+                auto_approve: true,
+                max_iterations: 4,
+                ..Default::default()
+            },
+        );
+
+        let output = agent
+            .run("weather in Shanghai")
+            .await
+            .expect("agent should continue and eventually succeed");
+        assert_eq!(output, "STATUS: success\nDone.");
+        let calls = *call_count
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn parses_status_tokens_from_response_lines() {
+        assert_eq!(
+            parse_assistant_status("STATUS: success_with_warnings\nDone"),
+            Some(AssistantStatus::SuccessWithWarnings)
+        );
+        assert_eq!(
+            parse_assistant_status("status: failed_but_need_further_steps\nretry"),
+            Some(AssistantStatus::FailedButNeedFurtherSteps)
+        );
+        assert_eq!(parse_assistant_status("No status here"), None);
     }
 }

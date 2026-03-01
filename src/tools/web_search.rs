@@ -82,7 +82,7 @@ impl Tool for WebSearchTool {
             }
         }
 
-        Ok(primary)
+        anyhow::bail!("{}", NO_WEB_RESULTS)
     }
 
     fn match_target(&self, args: &Value) -> String {
