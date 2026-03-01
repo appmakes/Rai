@@ -49,7 +49,6 @@ Examples that trigger built-in tools:
 
 ```bash
 rai run "weather in Shanghai"
-rai run "whois google.com"
 ```
 
 If a direct built-in lookup fails (for example network issues), Rai falls back to the AI agent to choose alternative tools/sources and continue toward a final answer.

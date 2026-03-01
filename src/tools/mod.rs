@@ -1,5 +1,17 @@
-pub mod builtin;
-pub mod extended;
+pub mod file_append;
+pub mod file_edit;
+pub mod file_read;
+pub mod file_write;
+pub mod git_operations;
+pub mod http_get;
+pub mod http_request;
+pub mod list_dir;
+pub mod read_file;
+pub mod shell;
+pub mod utils;
+pub mod web_fetch;
+pub mod web_search;
+pub mod write_file;
 
 use crate::permission::Permission;
 use anyhow::Result;
@@ -40,20 +52,19 @@ pub trait Tool: Send + Sync {
 
 pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
     vec![
-        Box::new(builtin::ShellTool),
-        Box::new(builtin::ReadFileTool),
-        Box::new(builtin::WriteFileTool),
-        Box::new(builtin::ListDirTool),
-        Box::new(builtin::HttpGetTool),
-        Box::new(builtin::WhoisTool),
-        Box::new(extended::FileReadTool),
-        Box::new(extended::FileWriteTool),
-        Box::new(extended::FileAppendTool),
-        Box::new(extended::FileEditTool),
-        Box::new(extended::HttpRequestTool),
-        Box::new(extended::WebFetchTool),
-        Box::new(extended::WebSearchTool),
-        Box::new(extended::GitOperationsTool),
+        Box::new(shell::ShellTool),
+        Box::new(read_file::ReadFileTool),
+        Box::new(write_file::WriteFileTool),
+        Box::new(list_dir::ListDirTool),
+        Box::new(http_get::HttpGetTool),
+        Box::new(file_read::FileReadTool),
+        Box::new(file_write::FileWriteTool),
+        Box::new(file_append::FileAppendTool),
+        Box::new(file_edit::FileEditTool),
+        Box::new(http_request::HttpRequestTool),
+        Box::new(web_fetch::WebFetchTool),
+        Box::new(web_search::WebSearchTool),
+        Box::new(git_operations::GitOperationsTool),
     ]
 }
 
@@ -87,6 +98,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         for expected in [
+            "shell",
+            "read_file",
+            "write_file",
+            "list_dir",
+            "http_get",
             "file_read",
             "file_write",
             "file_append",
@@ -102,5 +118,9 @@ mod tests {
                 expected
             );
         }
+        assert!(
+            !names.iter().any(|name| name == "whois"),
+            "whois tool should not be in common-purpose registry"
+        );
     }
 }
