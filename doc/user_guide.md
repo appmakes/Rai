@@ -128,8 +128,6 @@ Rai now includes additional tool names compatible with `nullclaw` workflows:
 
 These are available to the agent automatically during `rai run`.
 
-Rai does not hardcode task-specific shortcuts (for example weather/whois). Those requests are handled through normal provider + tool calling.
-
 ### 4.9 Path Safety Guardrails (Unix)
 For filesystem-related tools (`file_read`, `file_write`, `file_append`, `file_edit`, `list_dir`, and git path operations), Rai always blocks system-critical Unix prefixes:
 
