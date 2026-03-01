@@ -148,6 +148,42 @@ fn test_run_adhoc_no_api_key() {
 }
 
 #[test]
+fn test_run_weather_prompt_no_shortcut_without_api_key() {
+    let output = rai_bin()
+        .args(["run", "weather in Shanghai"])
+        .env_remove("RAI_API_KEY")
+        .env_remove("POE_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No API key found"),
+        "Expected no direct weather shortcut. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_run_whois_prompt_no_shortcut_without_api_key() {
+    let output = rai_bin()
+        .args(["run", "whois google.com"])
+        .env_remove("RAI_API_KEY")
+        .env_remove("POE_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No API key found"),
+        "Expected no direct whois shortcut. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
 fn test_bill_flag_reports_zero_usage_when_no_api_call_is_made() {
     let output = rai_bin()
         .args(["run", "Hello world", "--bill"])
