@@ -98,6 +98,9 @@ impl Agent {
                         print_detail_response(request_number, &text);
                     }
                     let status = parse_assistant_status(&text);
+                    if is_success_status(status) {
+                        pending_retry_after_failure = false;
+                    }
                     if matches!(status, Some(AssistantStatus::FailedButNeedFurtherSteps)) {
                         pending_retry_after_failure = true;
                         messages.push(Message::user(
@@ -107,7 +110,7 @@ Do not stop yet.",
                         ));
                         continue;
                     }
-                    if pending_retry_after_failure {
+                    if pending_retry_after_failure && status.is_none() {
                         messages.push(Message::user(&build_retry_after_failed_text_response(
                             &text,
                         )));
@@ -585,6 +588,15 @@ fn parse_assistant_status(text: &str) -> Option<AssistantStatus> {
         return Some(status);
     }
     None
+}
+
+fn is_success_status(status: Option<AssistantStatus>) -> bool {
+    matches!(
+        status,
+        Some(AssistantStatus::Success)
+            | Some(AssistantStatus::SuccessWithWarnings)
+            | Some(AssistantStatus::SuccessButCanGoDeeper)
+    )
 }
 
 #[cfg(test)]
