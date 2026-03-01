@@ -122,7 +122,7 @@ rai run "fetch https://ziglang.org and summarize"
 
 Nullclaw-compatible tool aliases are included (`file_read`, `file_write`, `file_append`, `file_edit`, `http_request`, `web_fetch`, `web_search`, `git_operations`) so cross-agent tool prompts map cleanly in Rai.
 
-For direct tool shortcuts (such as weather), if the direct request fails, Rai now falls back to the AI agent so it can choose alternate tools and still complete the request.
+Rai does not hardcode task-specific shortcuts (such as weather/whois). General prompts are handled through the provider and tool-calling flow (for example via `web_search` and `web_fetch`).
 
 On Unix, filesystem and git-path operations enforce a hard safety block on system-critical prefixes (for example `/etc`, `/bin`, `/usr/bin`, `/dev`, `/proc`, `/sys`) regardless of other allow rules.
 

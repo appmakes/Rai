@@ -19,7 +19,6 @@ mod template;
 mod tools;
 
 use providers::{get_billing_stats, reset_billing_stats, BillingStats, Provider};
-use tools::Tool;
 
 fn set_api_key_helper(provider: &str, api_key: &str) -> anyhow::Result<()> {
     key_store::set_api_key(provider, api_key)
@@ -251,16 +250,6 @@ fn compose_adhoc_prompt(task: &str, piped_stdin: Option<&str>) -> String {
     }
 }
 
-fn append_direct_tool_failure_note(base_prompt: String, direct_error: Option<&str>) -> String {
-    let Some(error) = direct_error else {
-        return base_prompt;
-    };
-    format!(
-        "{}\n\n[Execution note]\nA direct built-in attempt failed with: {}\nPlease decide what to do next and still fulfill the original user request. Prefer alternative tools/sources when needed.",
-        base_prompt, error
-    )
-}
-
 #[cfg(test)]
 fn parse_shorthand_args(raw_args: &[String]) -> (Option<String>, Vec<String>) {
     let mut subtask: Option<String> = None;
@@ -338,22 +327,6 @@ async fn handle_run(
 ) -> anyhow::Result<()> {
     let task_path = Path::new(task);
     let is_file = task_path.exists() && task_path.is_file();
-    let mut direct_tool_failure: Option<String> = None;
-    if !is_file {
-        match try_handle_direct_prompt(task) {
-            Ok(Some(direct_output)) => {
-                print_result(&direct_output);
-                return Ok(());
-            }
-            Ok(None) => {}
-            Err(err) => {
-                direct_tool_failure = Some(err.to_string());
-                if opts.detail_enabled {
-                    print_info("Direct tool attempt failed; asking AI for fallback.");
-                }
-            }
-        }
-    }
     let piped_stdin = if is_file {
         PipedStdin::NotPiped
     } else {
@@ -434,8 +407,7 @@ async fn handle_run(
             PipedStdin::Content(content) => Some(content.as_str()),
             PipedStdin::NotPiped | PipedStdin::Empty => None,
         };
-        let base_prompt = compose_adhoc_prompt(task, piped_content);
-        let prompt = append_direct_tool_failure_note(base_prompt, direct_tool_failure.as_deref());
+        let prompt = compose_adhoc_prompt(task, piped_content);
         (prompt, model)
     };
 
@@ -696,25 +668,6 @@ fn print_processed_response(response: &str, think_enabled: bool) {
     } else {
         print_result(candidate);
     }
-}
-
-fn try_handle_direct_prompt(task: &str) -> anyhow::Result<Option<String>> {
-    let trimmed = task.trim();
-    let lowercase = trimmed.to_ascii_lowercase();
-
-    if lowercase.starts_with("weather in ") {
-        let location = trimmed["weather in ".len()..].trim();
-        if location.is_empty() {
-            return Ok(None);
-        }
-        let encoded_location = location.split_whitespace().collect::<Vec<_>>().join("%20");
-        let url = format!("https://wttr.in/{}?format=3", encoded_location);
-        let tool = tools::http_get::HttpGetTool;
-        let output = tool.execute(&serde_json::json!({ "url": url }))?;
-        return Ok(Some(output.trim().to_string()));
-    }
-
-    Ok(None)
 }
 
 fn set_profile_api_key(profile: &str, provider: &str, api_key: &str) -> anyhow::Result<()> {
@@ -1416,9 +1369,8 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_direct_tool_failure_note, apply_think_mode_prompt, compose_adhoc_prompt,
-        ensure_non_empty_piped_stdin, extract_thinking_blocks, parse_shorthand_args, Cli,
-        PipedStdin,
+        apply_think_mode_prompt, compose_adhoc_prompt, ensure_non_empty_piped_stdin,
+        extract_thinking_blocks, parse_shorthand_args, Cli, PipedStdin,
     };
     use clap::Parser;
 
@@ -1432,24 +1384,6 @@ mod tests {
     fn test_compose_adhoc_prompt_with_stdin() {
         let prompt = compose_adhoc_prompt("Summarize this", Some("input text\n"));
         assert_eq!(prompt, "Summarize this\n\ninput text");
-    }
-
-    #[test]
-    fn test_append_direct_tool_failure_note_when_error_exists() {
-        let prompt = append_direct_tool_failure_note(
-            "weather in Shanghai".to_string(),
-            Some("HTTP request failed"),
-        );
-        assert!(prompt.contains("weather in Shanghai"));
-        assert!(prompt.contains("[Execution note]"));
-        assert!(prompt.contains("HTTP request failed"));
-    }
-
-    #[test]
-    fn test_append_direct_tool_failure_note_without_error() {
-        let base = "weather in Shanghai".to_string();
-        let prompt = append_direct_tool_failure_note(base.clone(), None);
-        assert_eq!(prompt, base);
     }
 
     #[test]
