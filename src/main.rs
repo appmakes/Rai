@@ -1459,7 +1459,8 @@ mod tests {
     use super::{
         apply_status_contract_prompt, apply_think_mode_prompt, compose_adhoc_prompt,
         ensure_non_empty_piped_stdin, extract_thinking_blocks, parse_assistant_status,
-        parse_shorthand_args, response_has_failure_language, AssistantStatus, Cli, PipedStdin,
+        parse_shorthand_args, print_and_validate_response, response_has_failure_language,
+        AssistantStatus, Cli, PipedStdin,
     };
     use clap::Parser;
 
@@ -1554,6 +1555,27 @@ mod tests {
     fn test_failure_language_detection_for_inability_reply() {
         let response = "I couldn't retrieve the current weather for Shanghai.";
         assert!(response_has_failure_language(response));
+    }
+
+    #[test]
+    fn test_print_and_validate_response_fails_on_failed_status() {
+        let response = "STATUS: failed_and_end_the_loop\nI could not complete this task.";
+        let result = print_and_validate_response(response, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_print_and_validate_response_fails_on_failure_language_without_status() {
+        let response = "I couldn't retrieve the current weather for Shanghai.";
+        let result = print_and_validate_response(response, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_print_and_validate_response_accepts_success_status() {
+        let response = "STATUS: success\nShanghai is 18C and cloudy.";
+        let result = print_and_validate_response(response, false);
+        assert!(result.is_ok());
     }
 
     #[test]
