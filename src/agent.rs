@@ -24,6 +24,7 @@ pub struct AgentConfig {
     pub blocked_patterns: Vec<String>,
     pub detail_enabled: bool,
     pub think_enabled: bool,
+    pub silent_enabled: bool,
 }
 
 impl Default for AgentConfig {
@@ -34,6 +35,7 @@ impl Default for AgentConfig {
             blocked_patterns: Vec::new(),
             detail_enabled: false,
             think_enabled: false,
+            silent_enabled: false,
         }
     }
 }
@@ -103,6 +105,9 @@ impl Agent {
                         pending_retry_after_failure = false;
                     }
                     if matches!(status, Some(AssistantStatus::FailedButNeedFurtherSteps)) {
+                        if self.config.silent_enabled {
+                            return Ok(text);
+                        }
                         pending_retry_after_failure = true;
                         messages.push(Message::user(
                             "[Retry required]\nYou reported `failed_but_need_further_steps`.\n\
@@ -433,13 +438,16 @@ fn build_system_prompt(think_enabled: bool) -> String {
     } else {
         ""
     };
-    let status_rule = r#"- Final response contract: start your final answer with
-  `STATUS: <value>` where value is exactly one of:
-  `success`, `success_with_warnings`, `success_but_can_go_deeper`,
-  `failed_and_end_the_loop`, `failed_but_need_further_steps`.
-- If required data is still missing but additional attempts are possible, use
-  `failed_but_need_further_steps` and continue tool-based attempts.
-- Use `failed_and_end_the_loop` only when you truly cannot proceed further."#;
+    let status_rule = r#"- Final response contract: return ONLY valid JSON (no markdown):
+  {
+    "state": "success" | "fail" | "proceeding",
+    "output": "<cli output or empty>",
+    "description": "<reason/explanation>",
+    "arguments": {"prompt":"...", "options":["..."]} | "prompt text" | null,
+    "thinking": "<optional>"
+  }
+- If additional input is still needed, use `"state":"proceeding"` and provide `arguments`.
+- Use `"state":"fail"` only when you truly cannot proceed further."#;
 
     format!(
         r#"You are Rai, a CLI assistant with access to tools.
@@ -589,6 +597,10 @@ fn truncate_for_retry_note(input: &str, max_chars: usize) -> String {
 }
 
 fn parse_assistant_status(text: &str) -> Option<AssistantStatus> {
+    if let Some(status) = parse_status_from_json_payload(text) {
+        return Some(status);
+    }
+
     for line in text.lines().take(12) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -597,7 +609,8 @@ fn parse_assistant_status(text: &str) -> Option<AssistantStatus> {
         let Some((label, raw_value)) = trimmed.split_once(':') else {
             continue;
         };
-        if !label.trim().eq_ignore_ascii_case("status") {
+        let label_normalized = label.trim().to_ascii_lowercase();
+        if label_normalized != "status" && label_normalized != "state" {
             continue;
         }
         let normalized = raw_value
@@ -606,6 +619,8 @@ fn parse_assistant_status(text: &str) -> Option<AssistantStatus> {
             .replace([' ', '-'], "_");
         let status = match normalized.as_str() {
             "success" => AssistantStatus::Success,
+            "fail" => AssistantStatus::FailedAndEndTheLoop,
+            "proceeding" => AssistantStatus::FailedButNeedFurtherSteps,
             "success_with_warnings" => AssistantStatus::SuccessWithWarnings,
             "success_but_can_go_deeper" => AssistantStatus::SuccessButCanGoDeeper,
             "failed_and_end_the_loop" => AssistantStatus::FailedAndEndTheLoop,
@@ -615,6 +630,40 @@ fn parse_assistant_status(text: &str) -> Option<AssistantStatus> {
         return Some(status);
     }
     None
+}
+
+fn parse_status_from_json_payload(text: &str) -> Option<AssistantStatus> {
+    let value = parse_json_like_object(text)?;
+    let state = value.get("state")?.as_str()?.trim().to_ascii_lowercase();
+    match state.as_str() {
+        "success" => Some(AssistantStatus::Success),
+        "fail" => Some(AssistantStatus::FailedAndEndTheLoop),
+        "proceeding" => Some(AssistantStatus::FailedButNeedFurtherSteps),
+        _ => None,
+    }
+}
+
+fn parse_json_like_object(text: &str) -> Option<serde_json::Value> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if value.is_object() {
+            return Some(value);
+        }
+    }
+    let (first, last) = (trimmed.find('{')?, trimmed.rfind('}')?);
+    if last <= first {
+        return None;
+    }
+    let candidate = &trimmed[first..=last];
+    let value = serde_json::from_str::<serde_json::Value>(candidate).ok()?;
+    if value.is_object() {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 fn is_success_status(status: Option<AssistantStatus>) -> bool {
@@ -809,9 +858,13 @@ mod tests {
                 },
                 MockMode::StatusDrivenRetry => match current_call {
                     1 => ProviderResponse::Text(
-                        "STATUS: failed_but_need_further_steps\nNeed one more try.".to_string(),
+                        r#"{"state":"proceeding","output":"","description":"Need one more try."}"#
+                            .to_string(),
                     ),
-                    _ => ProviderResponse::Text("STATUS: success\nDone.".to_string()),
+                    _ => ProviderResponse::Text(
+                        r#"{"state":"success","output":"Done.","description":"Completed."}"#
+                            .to_string(),
+                    ),
                 },
             };
             Ok(response)
@@ -950,7 +1003,7 @@ mod tests {
             .run("weather in Shanghai")
             .await
             .expect("agent should continue and eventually succeed");
-        assert_eq!(output, "STATUS: success\nDone.");
+        assert!(output.contains(r#""state":"success""#));
         let calls = *call_count
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
@@ -966,6 +1019,14 @@ mod tests {
         assert_eq!(
             parse_assistant_status("status: failed_but_need_further_steps\nretry"),
             Some(AssistantStatus::FailedButNeedFurtherSteps)
+        );
+        assert_eq!(
+            parse_assistant_status("state: proceeding\nneed more input"),
+            Some(AssistantStatus::FailedButNeedFurtherSteps)
+        );
+        assert_eq!(
+            parse_assistant_status(r#"{"state":"fail","output":"","description":"nope"}"#),
+            Some(AssistantStatus::FailedAndEndTheLoop)
         );
         assert_eq!(parse_assistant_status("No status here"), None);
     }

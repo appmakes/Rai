@@ -75,6 +75,10 @@ struct Cli {
     #[arg(long, global = true)]
     no_tools: bool,
 
+    /// Do not ask for follow-up input when response is proceeding
+    #[arg(short = 's', long, global = true)]
+    silent: bool,
+
     /// Print API-call and token usage summary for this command
     #[arg(long, global = true)]
     bill: bool,
@@ -265,6 +269,28 @@ enum UserFinalState {
     Fail,
 }
 
+#[derive(Debug, Clone)]
+struct FollowupRequest {
+    prompt: String,
+    options: Vec<String>,
+    description: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseDirective {
+    Done,
+    NeedsInput(FollowupRequest),
+}
+
+#[derive(Debug, Clone)]
+struct ParsedAssistantPayload {
+    state: AssistantStatus,
+    output: String,
+    description: String,
+    arguments: Option<serde_json::Value>,
+    thinking: Option<String>,
+}
+
 #[cfg(test)]
 fn parse_shorthand_args(raw_args: &[String]) -> (Option<String>, Vec<String>) {
     let mut subtask: Option<String> = None;
@@ -321,6 +347,7 @@ struct ExecutionOptions<'a> {
     cli_auto_approve: bool,
     detail_enabled: bool,
     think_enabled: bool,
+    silent_enabled: bool,
 }
 
 fn execution_options_from_cli(cli: &Cli) -> ExecutionOptions<'_> {
@@ -331,6 +358,7 @@ fn execution_options_from_cli(cli: &Cli) -> ExecutionOptions<'_> {
         cli_auto_approve: cli.yes,
         detail_enabled: cli.detail,
         think_enabled: cli.think,
+        silent_enabled: cli.silent,
     }
 }
 
@@ -441,30 +469,56 @@ async fn handle_run(
         _ => {}
     }
 
+    let mut current_prompt = prompt;
     if use_agent {
         let builtin = tools::builtin_tools();
         let agent_config = agent::AgentConfig {
             auto_approve,
             detail_enabled: opts.detail_enabled,
             think_enabled: opts.think_enabled,
+            silent_enabled: opts.silent_enabled,
             ..Default::default()
         };
         let mut agent_loop = agent::Agent::new(provider_impl, model, builtin, agent_config);
 
-        let response = agent_loop.run(&prompt).await?;
-        print_and_validate_response(&response, opts.think_enabled)?;
+        loop {
+            let agent_prompt =
+                apply_status_contract_prompt(current_prompt.clone(), opts.silent_enabled);
+            let response = agent_loop.run(&agent_prompt).await?;
+            match print_and_validate_response(&response, opts.think_enabled, opts.silent_enabled)? {
+                ResponseDirective::Done => break,
+                ResponseDirective::NeedsInput(request) => {
+                    let input = collect_followup_input(&request, opts.silent_enabled)?;
+                    current_prompt
+                        .push_str(&format!("\n\n[Additional user input]\n{}\n", input.trim()));
+                }
+            }
+        }
     } else {
-        let provider_prompt =
-            apply_think_mode_prompt(apply_status_contract_prompt(prompt), opts.think_enabled);
-        if opts.detail_enabled {
-            print_info(&format!("Sending request to {}...", config.provider));
-            print_detail_prompt(1, &provider_prompt);
+        let mut exchange_number = 0usize;
+        loop {
+            exchange_number += 1;
+            let provider_prompt = apply_think_mode_prompt(
+                apply_status_contract_prompt(current_prompt.clone(), opts.silent_enabled),
+                opts.think_enabled,
+            );
+            if opts.detail_enabled {
+                print_info(&format!("Sending request to {}...", config.provider));
+                print_detail_prompt(exchange_number, &provider_prompt);
+            }
+            let response = provider_impl.chat(&model, &provider_prompt).await?;
+            if opts.detail_enabled {
+                print_detail_response(exchange_number, &response);
+            }
+            match print_and_validate_response(&response, opts.think_enabled, opts.silent_enabled)? {
+                ResponseDirective::Done => break,
+                ResponseDirective::NeedsInput(request) => {
+                    let input = collect_followup_input(&request, opts.silent_enabled)?;
+                    current_prompt
+                        .push_str(&format!("\n\n[Additional user input]\n{}\n", input.trim()));
+                }
+            }
         }
-        let response = provider_impl.chat(&model, &provider_prompt).await?;
-        if opts.detail_enabled {
-            print_detail_response(1, &response);
-        }
-        print_and_validate_response(&response, opts.think_enabled)?;
     }
 
     Ok(())
@@ -648,10 +702,15 @@ fn apply_think_mode_prompt(base_prompt: String, think_enabled: bool) -> String {
     )
 }
 
-fn apply_status_contract_prompt(base_prompt: String) -> String {
+fn apply_status_contract_prompt(base_prompt: String, silent_enabled: bool) -> String {
+    let silent_rule = if silent_enabled {
+        "Silent mode is enabled. Do not return `state: \"proceeding\"`; choose `success` or `fail`."
+    } else {
+        "If additional input/options are needed, return `state: \"proceeding\"` with `arguments` guidance."
+    };
     format!(
-        "{}\n\n[Output contract]\nStart your final answer with:\nSTATUS: <value>\nwhere <value> must be exactly one of:\n- success\n- success_with_warnings\n- success_but_can_go_deeper\n- failed_and_end_the_loop\n- failed_but_need_further_steps",
-        base_prompt
+        "{}\n\n[Output contract]\nReturn ONLY valid JSON (no markdown, no extra text):\n{{\n  \"state\": \"success\" | \"fail\" | \"proceeding\",\n  \"output\": \"<cli output string or empty>\",\n  \"description\": \"<human-readable explanation or error reason>\",\n  \"arguments\": {{\"prompt\":\"...\", \"options\":[\"...\",\"...\"]}} | \"prompt text\" | null,\n  \"thinking\": \"<optional, mainly when think mode is enabled>\"\n}}\n{}\nDo not include additional keys unless necessary.",
+        base_prompt, silent_rule
     )
 }
 
@@ -698,6 +757,10 @@ fn print_processed_response(response: &str, think_enabled: bool) {
 }
 
 fn parse_assistant_status(response: &str) -> Option<AssistantStatus> {
+    if let Some(parsed) = parse_assistant_payload(response) {
+        return Some(parsed.state);
+    }
+
     let (_, cleaned) = extract_thinking_blocks(response);
     for line in cleaned.lines().take(12) {
         let trimmed = line.trim();
@@ -713,12 +776,15 @@ fn parse_assistant_status(response: &str) -> Option<AssistantStatus> {
 
 fn parse_status_line(trimmed_line: &str) -> Option<AssistantStatus> {
     let (label, value) = trimmed_line.split_once(':')?;
-    if !label.trim().eq_ignore_ascii_case("status") {
+    let label_normalized = label.trim().to_ascii_lowercase();
+    if label_normalized != "status" && label_normalized != "state" {
         return None;
     }
     let normalized = value.trim().to_ascii_lowercase().replace([' ', '-'], "_");
     match normalized.as_str() {
         "success" => Some(AssistantStatus::Success),
+        "fail" => Some(AssistantStatus::FailedAndEndTheLoop),
+        "proceeding" => Some(AssistantStatus::FailedButNeedFurtherSteps),
         "success_with_warnings" => Some(AssistantStatus::SuccessWithWarnings),
         "success_but_can_go_deeper" => Some(AssistantStatus::SuccessButCanGoDeeper),
         "failed_and_end_the_loop" => Some(AssistantStatus::FailedAndEndTheLoop),
@@ -740,6 +806,143 @@ fn strip_internal_status_lines(text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn parse_assistant_payload(response: &str) -> Option<ParsedAssistantPayload> {
+    let (_, cleaned) = extract_thinking_blocks(response);
+    parse_assistant_payload_from_text(cleaned.trim())
+}
+
+fn parse_assistant_payload_from_text(text: &str) -> Option<ParsedAssistantPayload> {
+    let value = parse_json_like_object(text)?;
+    let state_text = value
+        .get("state")
+        .and_then(|v| v.as_str())
+        .map(str::trim)?
+        .to_ascii_lowercase();
+    let state = match state_text.as_str() {
+        "success" => AssistantStatus::Success,
+        "fail" => AssistantStatus::FailedAndEndTheLoop,
+        "proceeding" => AssistantStatus::FailedButNeedFurtherSteps,
+        _ => return None,
+    };
+
+    Some(ParsedAssistantPayload {
+        state,
+        output: extract_string_field(value.get("output")),
+        description: extract_string_field(value.get("description")),
+        arguments: value.get("arguments").cloned(),
+        thinking: value
+            .get("thinking")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    })
+}
+
+fn parse_json_like_object(text: &str) -> Option<serde_json::Value> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if value.is_object() {
+            return Some(value);
+        }
+    }
+
+    if let (Some(first), Some(last)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if last > first {
+            let candidate = &trimmed[first..=last];
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate) {
+                if value.is_object() {
+                    return Some(value);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_string_field(value: Option<&serde_json::Value>) -> String {
+    match value {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) if !other.is_null() => other.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn build_followup_request(payload: &ParsedAssistantPayload) -> FollowupRequest {
+    let mut prompt = if !payload.description.trim().is_empty() {
+        payload.description.clone()
+    } else {
+        "Additional input is required to continue.".to_string()
+    };
+    let mut options = Vec::new();
+
+    if let Some(arguments) = payload.arguments.as_ref() {
+        match arguments {
+            serde_json::Value::String(s) => {
+                if !s.trim().is_empty() {
+                    prompt = s.clone();
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for key in ["prompt", "question", "message"] {
+                    if let Some(text) = map.get(key).and_then(|v| v.as_str()) {
+                        if !text.trim().is_empty() {
+                            prompt = text.to_string();
+                            break;
+                        }
+                    }
+                }
+                for key in ["options", "choices"] {
+                    if let Some(items) = map.get(key).and_then(|v| v.as_array()) {
+                        options = items
+                            .iter()
+                            .filter_map(|item| item.as_str())
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>();
+                        if !options.is_empty() {
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    FollowupRequest {
+        prompt,
+        options,
+        description: payload.description.clone(),
+    }
+}
+
+fn collect_followup_input(
+    request: &FollowupRequest,
+    silent_enabled: bool,
+) -> anyhow::Result<String> {
+    if silent_enabled || !is_interactive() {
+        anyhow::bail!("Assistant requires additional input, but follow-up prompting is disabled.");
+    }
+
+    if !request.options.is_empty() {
+        let selection = Select::new()
+            .with_prompt(&request.prompt)
+            .items(&request.options)
+            .default(0)
+            .interact_opt()?;
+        let Some(index) = selection else {
+            anyhow::bail!("Cancelled follow-up input.");
+        };
+        return Ok(request.options[index].clone());
+    }
+
+    let value: String = Input::new().with_prompt(&request.prompt).interact_text()?;
+    Ok(value)
 }
 
 fn response_has_failure_language(response: &str) -> bool {
@@ -778,15 +981,87 @@ fn derive_user_final_state(response: &str) -> UserFinalState {
     }
 }
 
-fn print_and_validate_response(response: &str, think_enabled: bool) -> anyhow::Result<()> {
+fn print_and_validate_response(
+    response: &str,
+    think_enabled: bool,
+    silent_enabled: bool,
+) -> anyhow::Result<ResponseDirective> {
+    let (thoughts, _cleaned) = extract_thinking_blocks(response);
+    if think_enabled {
+        if thoughts.is_empty() {
+            if let Some(parsed) = parse_assistant_payload(response) {
+                if let Some(thinking) = parsed.thinking {
+                    if !thinking.trim().is_empty() {
+                        print_thinking(&thinking);
+                    } else {
+                        print_thinking("No thinking chain returned by provider.");
+                    }
+                } else {
+                    print_thinking("No thinking chain returned by provider.");
+                }
+            } else {
+                print_thinking("No thinking chain returned by provider.");
+            }
+        } else {
+            for thought in thoughts {
+                print_thinking(&thought);
+            }
+        }
+    }
+
+    if let Some(parsed) = parse_assistant_payload(response) {
+        match parsed.state {
+            AssistantStatus::Success
+            | AssistantStatus::SuccessWithWarnings
+            | AssistantStatus::SuccessButCanGoDeeper => {
+                let visible = if !parsed.output.trim().is_empty() {
+                    parsed.output
+                } else {
+                    parsed.description
+                };
+                if !visible.trim().is_empty() {
+                    print_result(visible.trim());
+                }
+                return Ok(ResponseDirective::Done);
+            }
+            AssistantStatus::FailedAndEndTheLoop => {
+                let message = if !parsed.description.trim().is_empty() {
+                    parsed.description
+                } else if !parsed.output.trim().is_empty() {
+                    parsed.output
+                } else {
+                    "Request failed.".to_string()
+                };
+                print_result(message.trim());
+                anyhow::bail!(
+                    "Assistant response indicates failure. Returning non-zero exit code."
+                );
+            }
+            AssistantStatus::FailedButNeedFurtherSteps => {
+                let followup = build_followup_request(&parsed);
+                if silent_enabled || !is_interactive() {
+                    let message = if !followup.description.trim().is_empty() {
+                        followup.description
+                    } else {
+                        "Additional input is required but prompting is disabled.".to_string()
+                    };
+                    print_result(message.trim());
+                    anyhow::bail!(
+                        "Assistant requires additional input, but follow-up prompting is disabled."
+                    );
+                }
+                if !followup.description.trim().is_empty() {
+                    print_info(followup.description.trim());
+                }
+                return Ok(ResponseDirective::NeedsInput(followup));
+            }
+        }
+    }
+
     print_processed_response(response, think_enabled);
     match derive_user_final_state(response) {
-        UserFinalState::Success => {
-            println!("success");
-            Ok(())
-        }
+        UserFinalState::Success => Ok(ResponseDirective::Done),
         UserFinalState::Fail => {
-            println!("fail");
             anyhow::bail!("Assistant response indicates failure. Returning non-zero exit code.")
         }
     }
@@ -1493,9 +1768,9 @@ mod tests {
     use super::{
         apply_status_contract_prompt, apply_think_mode_prompt, compose_adhoc_prompt,
         derive_user_final_state, ensure_non_empty_piped_stdin, extract_thinking_blocks,
-        parse_assistant_status, parse_shorthand_args, print_and_validate_response,
-        response_has_failure_language, strip_internal_status_lines, AssistantStatus, Cli,
-        PipedStdin, UserFinalState,
+        parse_assistant_payload, parse_assistant_status, parse_shorthand_args,
+        print_and_validate_response, response_has_failure_language, strip_internal_status_lines,
+        AssistantStatus, Cli, PipedStdin, ResponseDirective, UserFinalState,
     };
     use clap::Parser;
 
@@ -1554,10 +1829,10 @@ mod tests {
 
     #[test]
     fn test_apply_status_contract_prompt_adds_status_requirements() {
-        let prompt = apply_status_contract_prompt("Solve this".to_string());
+        let prompt = apply_status_contract_prompt("Solve this".to_string(), false);
         assert!(prompt.contains("[Output contract]"));
-        assert!(prompt.contains("failed_and_end_the_loop"));
-        assert!(prompt.contains("success_but_can_go_deeper"));
+        assert!(prompt.contains("\"state\": \"success\" | \"fail\" | \"proceeding\""));
+        assert!(prompt.contains("Additional input"));
     }
 
     #[test]
@@ -1600,29 +1875,38 @@ mod tests {
 
     #[test]
     fn test_print_and_validate_response_fails_on_failed_status() {
-        let response = "STATUS: failed_and_end_the_loop\nI could not complete this task.";
-        let result = print_and_validate_response(response, false);
+        let response =
+            r#"{"state":"fail","output":"","description":"I could not complete this task."}"#;
+        let result = print_and_validate_response(response, false, false);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_print_and_validate_response_fails_on_failure_language_without_status() {
         let response = "I couldn't retrieve the current weather for Shanghai.";
-        let result = print_and_validate_response(response, false);
+        let result = print_and_validate_response(response, false, false);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_print_and_validate_response_accepts_success_status() {
-        let response = "STATUS: success\nShanghai is 18C and cloudy.";
-        let result = print_and_validate_response(response, false);
-        assert!(result.is_ok());
+        let response = r#"{"state":"success","output":"Hello","description":"Translated"}"#;
+        let result = print_and_validate_response(response, false, false).expect("success");
+        assert_eq!(result, ResponseDirective::Done);
     }
 
     #[test]
     fn test_derive_user_final_state_maps_internal_status_to_fail() {
-        let response = "STATUS: failed_and_end_the_loop\nCannot complete";
+        let response = r#"{"state":"fail","output":"","description":"Cannot complete"}"#;
         assert_eq!(derive_user_final_state(response), UserFinalState::Fail);
+    }
+
+    #[test]
+    fn test_parse_assistant_payload_from_json_contract() {
+        let response = r#"{"state":"proceeding","output":"","description":"Need target text","arguments":{"prompt":"Enter text","options":["A","B"]}}"#;
+        let parsed = parse_assistant_payload(response).expect("payload should parse");
+        assert_eq!(parsed.state, AssistantStatus::FailedButNeedFurtherSteps);
+        assert_eq!(parsed.description, "Need target text");
     }
 
     #[test]
