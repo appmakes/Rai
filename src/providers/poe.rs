@@ -4,6 +4,13 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::io::Write as _;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 pub struct PoeProvider {
     api_key: String,
@@ -19,6 +26,7 @@ impl PoeProvider {
     }
 
     async fn send_request(&self, body: Value) -> Result<Value> {
+        let _spinner = Spinner::start("[rai] processing");
         let url = "https://api.poe.com/v1/chat/completions";
 
         let response = self
@@ -44,6 +52,64 @@ impl PoeProvider {
         record_usage_from_response(&response_json);
         Ok(response_json)
     }
+}
+
+struct Spinner {
+    active: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+    width: usize,
+}
+
+impl Spinner {
+    fn start(prefix: &str) -> Self {
+        if !spinner_enabled() {
+            return Self {
+                active: Arc::new(AtomicBool::new(false)),
+                handle: None,
+                width: 0,
+            };
+        }
+
+        let frames = ['|', '/', '-', '\\'];
+        let active = Arc::new(AtomicBool::new(true));
+        let active_thread = Arc::clone(&active);
+        let prefix_text = prefix.to_string();
+        let width = prefix_text.len() + 2;
+
+        let handle = std::thread::spawn(move || {
+            let mut index = 0usize;
+            while active_thread.load(Ordering::Relaxed) {
+                let frame = frames[index % frames.len()];
+                eprint!("\r{} {}", prefix_text, frame);
+                let _ = std::io::stderr().flush();
+                index += 1;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+
+        Self {
+            active,
+            handle: Some(handle),
+            width,
+        }
+    }
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            self.active.store(false, Ordering::Relaxed);
+            let _ = handle.join();
+            if self.width > 0 {
+                eprint!("\r{:width$}\r", "", width = self.width);
+                let _ = std::io::stderr().flush();
+            }
+        }
+    }
+}
+
+fn spinner_enabled() -> bool {
+    atty::is(atty::Stream::Stderr) && std::env::var_os("CI").is_none()
 }
 
 #[async_trait]

@@ -97,6 +97,8 @@ Use `--detail` when you want detailed runtime info (tool calls, prompts, provide
 rai run "weather in Shanghai" --detail
 ```
 
+While waiting on provider responses, Rai shows a small ASCII spinner (`[rai] processing`) on TTY terminals.
+
 Detailed provider exchanges are numbered as `request #N` and `response #N`.
 
 Rai uses internal model statuses and shows a user-facing final state line:
