@@ -109,6 +109,7 @@ rai run "weather in Shanghai" --bill --detail
 ```
 
 Detailed provider exchanges are numbered as `request #N` and `response #N`.
+Rai also shows a lightweight ASCII processing spinner while waiting for provider responses on TTY terminals.
 
 Rai uses an internal model status contract and shows a user-facing final state:
 
