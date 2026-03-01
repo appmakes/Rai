@@ -284,8 +284,7 @@ impl Agent {
                 let mut edited_args = tc.arguments.clone();
                 match tc.name.as_str() {
                     "shell" => edited_args["command"] = serde_json::Value::String(edited.clone()),
-                    "read_file" | "write_file" | "list_dir" | "file_read" | "file_write"
-                    | "file_append" | "file_edit" => {
+                    "list_dir" | "file_read" | "file_write" | "file_append" | "file_edit" => {
                         edited_args["path"] = serde_json::Value::String(edited.clone())
                     }
                     "http_get" | "http_request" | "web_fetch" => {
@@ -376,7 +375,7 @@ Rules:
 - If you need real-time data or system information, use the available tools.
 - Keep final answers short and clear.
 - Prefer `web_search` for discovery and `web_fetch` for page content.
-- Prefer the most specific tool (e.g., `read_file` over `shell cat`).
+- Prefer the most specific tool (e.g., `file_read` over `shell cat`).
 - For shell commands: use simple, portable commands when possible.
 - Never run destructive commands (rm -rf, drop table, etc.).
 - If a tool call is rejected, explain what you needed and suggest alternatives.
