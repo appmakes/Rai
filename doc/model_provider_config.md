@@ -121,6 +121,8 @@ By default, Rai keeps `run` output concise and prints the final answer in your t
 
 Use `--think` to ask the model for a reasoning trace. Rai requests `<think>...</think>` blocks and renders them as low-contrast info text before the final answer.
 
+Use `--silent` (or `-s`) to disable follow-up prompts when the model needs more input (`state: "proceeding"`). In silent mode, unresolved proceeding responses fail fast with a non-zero exit code.
+
 Common tool-driven prompts:
 
 ```bash

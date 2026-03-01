@@ -123,7 +123,7 @@ enum Commands {
         task: String,
 
         /// Optional sub-task name (e.g., #summary)
-        #[arg(short, long)]
+        #[arg(long)]
         subtask: Option<String>,
 
         /// Arguments for the task (including #subtask selector)
@@ -141,7 +141,7 @@ enum Commands {
         task_file: String,
 
         /// Optional sub-task name (e.g., #summary)
-        #[arg(short, long)]
+        #[arg(long)]
         subtask: Option<String>,
 
         /// Arguments pre-filled for the task
@@ -1925,5 +1925,11 @@ mod tests {
     fn test_cli_parses_think_flag() {
         let cli = Cli::parse_from(["rai", "--think", "run", "hello"]);
         assert!(cli.think);
+    }
+
+    #[test]
+    fn test_cli_parses_silent_flag() {
+        let cli = Cli::parse_from(["rai", "-s", "run", "hello"]);
+        assert!(cli.silent);
     }
 }

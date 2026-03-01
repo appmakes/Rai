@@ -123,7 +123,13 @@ Use `--think` to request reasoning traces from the provider.
 rai run "compare rust and go for backend APIs" --think
 ```
 
-### 4.8 Nullclaw-compatible Tool Names
+### 4.8 Silent Mode (`--silent`, `-s`)
+Use silent mode to disable follow-up prompts when the model returns `state: "proceeding"`.
+
+- In silent mode, Rai does not ask for additional input/options.
+- Rai treats unresolved `proceeding` responses as failure (non-zero exit code).
+
+### 4.9 Nullclaw-compatible Tool Names
 Rai now includes additional tool names compatible with `nullclaw` workflows:
 
 - `ls_tools` (tool discovery helper)
@@ -140,7 +146,7 @@ These are available to the agent automatically during `rai run`.
 
 You can ask the agent to call `ls_tools` to see the current built-in tool list with permissions and descriptions.
 
-### 4.9 Path Safety Guardrails (Unix)
+### 4.10 Path Safety Guardrails (Unix)
 For filesystem-related tools (`file_read`, `file_write`, `file_append`, `file_edit`, `list_dir`, and git path operations), Rai always blocks system-critical Unix prefixes:
 
 - `/System`, `/Library`
