@@ -260,8 +260,7 @@ impl Config {
 
         let source_profile = if let Some(source) = copy_from {
             let source_name = validate_profile_name(source)?;
-            let source_file = Self::load_profile_config(&config_dir, &source_name)?;
-            source_file
+            Self::load_profile_config(&config_dir, &source_name)?
         } else {
             ProfileConfigFile {
                 providers: vec!["poe".to_string()],
