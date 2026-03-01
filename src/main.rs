@@ -681,7 +681,7 @@ fn print_processed_response(response: &str, think_enabled: bool) {
             print_thinking("No thinking chain returned by provider.");
         } else {
             for thought in &thoughts {
-                print_thinking(&thought);
+                print_thinking(thought);
             }
         }
     }
