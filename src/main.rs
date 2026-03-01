@@ -76,6 +76,10 @@ struct Cli {
     #[arg(long, global = true)]
     bill: bool,
 
+    /// Select configuration profile
+    #[arg(long, global = true)]
+    profile: Option<String>,
+
     /// Task description or file path (shorthand for `rai run`)
     task: Option<String>,
 
@@ -89,8 +93,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// First-time setup wizard
+    Start,
     /// Configure AI model provider and other settings
     Config,
+    /// Manage profiles
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommands,
+    },
     /// Run a task directly
     Run {
         /// The task description or file path
@@ -124,11 +135,53 @@ enum Commands {
     },
 }
 
+#[derive(Subcommand)]
+enum ProfileCommands {
+    /// List all profiles
+    List,
+    /// Show profile details
+    Show {
+        /// Profile name
+        name: Option<String>,
+    },
+    /// Create a new profile
+    Create {
+        /// New profile name
+        name: String,
+        /// Optional source profile to copy from
+        #[arg(long)]
+        copy_from: Option<String>,
+    },
+    /// Delete a profile
+    Delete {
+        /// Profile name
+        name: String,
+    },
+    /// Rename a profile
+    Rename {
+        /// Existing profile name
+        old: String,
+        /// New profile name
+        new: String,
+    },
+    /// Set active profile
+    Switch {
+        /// Profile name
+        name: String,
+    },
+    /// Set default profile
+    Default {
+        /// Profile name
+        name: String,
+    },
+}
+
 fn resolve_provider(config: &Config) -> anyhow::Result<Box<dyn Provider>> {
     let provider = config.provider.trim().to_lowercase();
     if provider.is_empty() {
         anyhow::bail!(
-            "No provider configured. Set `providers` in ~/.config/rai/config.toml or run `rai config`."
+            "No provider configured for profile '{}'. Run `rai start` or `rai config`.",
+            config.profile
         );
     }
 
@@ -219,8 +272,9 @@ async fn handle_run(
     subtask: Option<&str>,
     args: &[String],
     model_override: Option<&str>,
-    use_agent: bool,
-    auto_approve: bool,
+    profile_override: Option<&str>,
+    cli_no_tools: bool,
+    cli_auto_approve: bool,
 ) -> anyhow::Result<()> {
     let task_path = Path::new(task);
     let is_file = task_path.exists() && task_path.is_file();
@@ -234,7 +288,7 @@ async fn handle_run(
         ensure_non_empty_piped_stdin(&piped_stdin)?;
     }
 
-    let mut config = Config::load()?;
+    let mut config = Config::load(profile_override)?;
     config.resolve_api_key()?;
 
     if config.api_key.is_empty() {
@@ -307,6 +361,18 @@ async fn handle_run(
 
     let provider_impl = resolve_provider(&config)?;
     info!("Using provider: {}, model: {}", config.provider, model);
+
+    let mut use_agent = if cli_no_tools {
+        false
+    } else {
+        !config.no_tools
+    };
+    let mut auto_approve = cli_auto_approve || config.auto_approve;
+    match config.tool_mode.as_str() {
+        "allow" => auto_approve = true,
+        "deny" => use_agent = false,
+        _ => {}
+    }
 
     if use_agent {
         let builtin = tools::builtin_tools();
@@ -421,13 +487,380 @@ fn handle_create(filename: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn print_section(title: &str) {
+    println!("\n=== {} ===", title);
+}
+
+fn set_profile_api_key(profile: &str, provider: &str, api_key: &str) -> anyhow::Result<()> {
+    if api_key.trim().is_empty() {
+        return Ok(());
+    }
+    let scoped_provider = format!("{}:{}", profile, provider);
+    set_api_key_helper(&scoped_provider, api_key)
+        .context("Failed to save profile-scoped API key to keyring")?;
+    // Backward-compatible fallback key.
+    let _ = set_api_key_helper(provider, api_key);
+    Ok(())
+}
+
+fn available_providers() -> Vec<&'static str> {
+    vec!["poe", "openai", "anthropic", "google", "xai"]
+}
+
+fn configure_provider_and_key(config: &mut Config) -> anyhow::Result<()> {
+    print_section("Provider");
+    let providers = available_providers();
+    let default_idx = providers
+        .iter()
+        .position(|provider| *provider == config.provider)
+        .unwrap_or(0);
+    let selection = Select::new()
+        .with_prompt("Select provider")
+        .items(&providers)
+        .default(default_idx)
+        .interact_opt()?;
+    let provider = match selection {
+        Some(index) => providers[index].to_string(),
+        None => {
+            println!("No changes made.");
+            return Ok(());
+        }
+    };
+
+    config.provider = provider.clone();
+    config.providers = vec![provider.clone()];
+    config.default_provider = Some(provider.clone());
+
+    let api_key: String = Input::new()
+        .with_prompt("API key (leave empty to keep current)")
+        .allow_empty(true)
+        .interact_text()?;
+    if !api_key.trim().is_empty() {
+        set_profile_api_key(&config.profile, &provider, &api_key)?;
+    }
+    Ok(())
+}
+
+fn configure_model_defaults(config: &mut Config) -> anyhow::Result<()> {
+    print_section("Model");
+    let default_model: String = Input::new()
+        .with_prompt("Default model")
+        .default(config.default_model.clone())
+        .interact_text()?;
+    config.default_model = default_model;
+    Ok(())
+}
+
+fn configure_tools(config: &mut Config) -> anyhow::Result<()> {
+    print_section("Tools");
+    let tool_modes = vec!["ask", "ask_once", "allow", "deny"];
+    let mode_index = tool_modes
+        .iter()
+        .position(|mode| *mode == config.tool_mode)
+        .unwrap_or(0);
+    if let Some(selection) = Select::new()
+        .with_prompt("Default tool mode")
+        .items(&tool_modes)
+        .default(mode_index)
+        .interact_opt()?
+    {
+        config.tool_mode = tool_modes[selection].to_string();
+    }
+
+    config.no_tools = Confirm::new()
+        .with_prompt("Disable tool calling by default?")
+        .default(config.no_tools)
+        .interact()?;
+    config.auto_approve = Confirm::new()
+        .with_prompt("Auto-approve tool calls by default?")
+        .default(config.auto_approve)
+        .interact()?;
+    Ok(())
+}
+
+fn print_profiles_list() -> anyhow::Result<()> {
+    let profiles = Config::list_profiles()?;
+    let (default_profile, active_profile) = Config::read_global_profile_settings()?;
+    if profiles.is_empty() {
+        println!("No profiles found.");
+        return Ok(());
+    }
+    println!("Profiles:");
+    for profile in profiles {
+        let mut tags = Vec::new();
+        if profile == default_profile {
+            tags.push("default");
+        }
+        if active_profile.as_deref() == Some(profile.as_str()) {
+            tags.push("active");
+        }
+        if tags.is_empty() {
+            println!("- {}", profile);
+        } else {
+            println!("- {} ({})", profile, tags.join(", "));
+        }
+    }
+    Ok(())
+}
+
+fn configure_profiles_menu(config: &mut Config) -> anyhow::Result<()> {
+    loop {
+        print_section("Profiles");
+        let options = vec![
+            "Switch active profile",
+            "Create profile",
+            "Delete profile",
+            "Rename current profile",
+            "Set default profile",
+            "List profiles",
+            "Back",
+        ];
+        let selection = Select::new()
+            .with_prompt(format!("Current profile: {}", config.profile))
+            .items(&options)
+            .default(0)
+            .interact_opt()?;
+
+        match selection {
+            Some(0) => {
+                let profiles = Config::list_profiles()?;
+                if profiles.is_empty() {
+                    println!("No profiles to switch to.");
+                    continue;
+                }
+                let current_idx = profiles
+                    .iter()
+                    .position(|profile| profile == &config.profile)
+                    .unwrap_or(0);
+                if let Some(choice) = Select::new()
+                    .with_prompt("Switch to profile")
+                    .items(&profiles)
+                    .default(current_idx)
+                    .interact_opt()?
+                {
+                    let selected = &profiles[choice];
+                    Config::set_active_profile(selected)?;
+                    *config = Config::load(Some(selected))?;
+                }
+            }
+            Some(1) => {
+                let name: String = Input::new()
+                    .with_prompt("New profile name")
+                    .interact_text()?;
+                let copy_current = Confirm::new()
+                    .with_prompt("Copy settings from current profile?")
+                    .default(true)
+                    .interact()?;
+                let copy_from = if copy_current {
+                    Some(config.profile.as_str())
+                } else {
+                    None
+                };
+                Config::create_profile(&name, copy_from)?;
+                println!("Profile '{}' created.", name);
+            }
+            Some(2) => {
+                let profiles = Config::list_profiles()?;
+                if profiles.is_empty() {
+                    println!("No profiles to delete.");
+                    continue;
+                }
+                if let Some(choice) = Select::new()
+                    .with_prompt("Delete which profile?")
+                    .items(&profiles)
+                    .default(0)
+                    .interact_opt()?
+                {
+                    let selected = profiles[choice].clone();
+                    Config::delete_profile(&selected)?;
+                    println!("Profile '{}' deleted.", selected);
+                }
+            }
+            Some(3) => {
+                let new_name: String = Input::new()
+                    .with_prompt("Rename current profile to")
+                    .interact_text()?;
+                let old_name = config.profile.clone();
+                Config::rename_profile(&old_name, &new_name)?;
+                *config = Config::load(Some(&new_name))?;
+                println!("Profile '{}' renamed to '{}'.", old_name, new_name);
+            }
+            Some(4) => {
+                let profiles = Config::list_profiles()?;
+                if profiles.is_empty() {
+                    println!("No profiles available.");
+                    continue;
+                }
+                if let Some(choice) = Select::new()
+                    .with_prompt("Set default profile")
+                    .items(&profiles)
+                    .default(0)
+                    .interact_opt()?
+                {
+                    let selected = &profiles[choice];
+                    Config::set_default_profile(selected)?;
+                    println!("Default profile set to '{}'.", selected);
+                }
+            }
+            Some(5) => {
+                print_profiles_list()?;
+            }
+            Some(6) | None => break,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn handle_config(profile_override: Option<&str>) -> anyhow::Result<()> {
+    if !is_interactive() {
+        anyhow::bail!(
+            "Cannot run `rai config` in non-interactive mode. Set configuration via files/env vars."
+        );
+    }
+
+    let mut config = Config::load(profile_override)?;
+    loop {
+        print_section("Configuration");
+        let options = vec![
+            "Provider & API key",
+            "Model defaults",
+            "Tools",
+            "Profiles",
+            "Save and exit",
+            "Exit without saving",
+        ];
+        let selection = Select::new()
+            .with_prompt(format!("Editing profile: {}", config.profile))
+            .items(&options)
+            .default(0)
+            .interact_opt()?;
+
+        match selection {
+            Some(0) => configure_provider_and_key(&mut config)?,
+            Some(1) => configure_model_defaults(&mut config)?,
+            Some(2) => configure_tools(&mut config)?,
+            Some(3) => configure_profiles_menu(&mut config)?,
+            Some(4) => {
+                config.save()?;
+                Config::set_active_profile(&config.profile)?;
+                println!("Configuration saved.");
+                return Ok(());
+            }
+            Some(5) | None => {
+                println!("Exited without saving.");
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+}
+
+fn handle_start(profile_override: Option<&str>) -> anyhow::Result<()> {
+    if !is_interactive() {
+        anyhow::bail!(
+            "Cannot run `rai start` in non-interactive mode. Use `rai config` files/env vars instead."
+        );
+    }
+
+    let target_profile = profile_override.unwrap_or("default");
+    if !Config::profile_exists(target_profile)? {
+        Config::create_profile(target_profile, None)?;
+    }
+    Config::set_active_profile(target_profile)?;
+    let mut config = Config::load(Some(target_profile))?;
+
+    print_section("Welcome to rai start");
+    println!("We'll do a quick setup: provider, API key, and model.");
+
+    configure_provider_and_key(&mut config)?;
+    configure_model_defaults(&mut config)?;
+    config.save()?;
+    Config::set_active_profile(&config.profile)?;
+
+    println!("\nSaved profile '{}'.", config.profile);
+    println!("Try: rai run \"Hello world\"");
+
+    let choices = vec!["Continue", "More settings"];
+    let selection = Select::new()
+        .with_prompt("Next step")
+        .items(&choices)
+        .default(0)
+        .interact_opt()?;
+    if matches!(selection, Some(1)) {
+        handle_config(Some(config.profile.as_str()))?;
+    }
+
+    Ok(())
+}
+
+fn handle_profile_command(
+    command: &ProfileCommands,
+    profile_override: Option<&str>,
+) -> anyhow::Result<()> {
+    match command {
+        ProfileCommands::List => print_profiles_list(),
+        ProfileCommands::Show { name } => {
+            let target = if let Some(name) = name.as_deref() {
+                name.to_string()
+            } else if let Some(profile) = profile_override {
+                profile.to_string()
+            } else {
+                let (default_profile, active_profile) = Config::read_global_profile_settings()?;
+                active_profile.unwrap_or(default_profile)
+            };
+            let config = Config::load(Some(&target))?;
+            println!("Profile: {}", config.profile);
+            println!("Providers: {}", config.providers.join(", "));
+            println!(
+                "Default provider: {}",
+                config
+                    .default_provider
+                    .as_deref()
+                    .unwrap_or("(none configured)")
+            );
+            println!("Default model: {}", config.default_model);
+            println!("Tool mode: {}", config.tool_mode);
+            println!("no_tools: {}", config.no_tools);
+            println!("auto_approve: {}", config.auto_approve);
+            Ok(())
+        }
+        ProfileCommands::Create { name, copy_from } => {
+            Config::create_profile(name, copy_from.as_deref())?;
+            println!("Profile '{}' created.", name);
+            Ok(())
+        }
+        ProfileCommands::Delete { name } => {
+            Config::delete_profile(name)?;
+            println!("Profile '{}' deleted.", name);
+            Ok(())
+        }
+        ProfileCommands::Rename { old, new } => {
+            Config::rename_profile(old, new)?;
+            println!("Profile '{}' renamed to '{}'.", old, new);
+            Ok(())
+        }
+        ProfileCommands::Switch { name } => {
+            Config::set_active_profile(name)?;
+            println!("Active profile set to '{}'.", name);
+            Ok(())
+        }
+        ProfileCommands::Default { name } => {
+            Config::set_default_profile(name)?;
+            println!("Default profile set to '{}'.", name);
+            Ok(())
+        }
+    }
+}
+
 async fn handle_plan(
     task_file: &str,
     subtask: Option<&str>,
     prefilled_args: &[String],
     model_override: Option<&str>,
-    use_agent: bool,
-    auto_approve: bool,
+    profile_override: Option<&str>,
+    cli_no_tools: bool,
+    cli_auto_approve: bool,
 ) -> anyhow::Result<()> {
     let path = Path::new(task_file);
     if !path.exists() {
@@ -580,8 +1013,9 @@ async fn handle_plan(
         subtask_opt,
         &final_args,
         model_override,
-        use_agent,
-        auto_approve,
+        profile_override,
+        cli_no_tools,
+        cli_auto_approve,
     )
     .await
 }
@@ -591,14 +1025,24 @@ async fn smart_execute(
     subtask: Option<&str>,
     args: &[String],
     model_override: Option<&str>,
-    use_agent: bool,
-    auto_approve: bool,
+    profile_override: Option<&str>,
+    cli_no_tools: bool,
+    cli_auto_approve: bool,
 ) -> anyhow::Result<()> {
     let task_path = Path::new(task);
     let is_file = task_path.exists() && task_path.is_file();
 
     if !is_file {
-        return handle_run(task, subtask, args, model_override, use_agent, auto_approve).await;
+        return handle_run(
+            task,
+            subtask,
+            args,
+            model_override,
+            profile_override,
+            cli_no_tools,
+            cli_auto_approve,
+        )
+        .await;
     }
 
     let parsed = task_parser::parse_task_file(task_path)?;
@@ -606,7 +1050,16 @@ async fn smart_execute(
     let section = match parsed.get_section(subtask) {
         Ok(s) => s,
         Err(_) if subtask.is_none() && !parsed.subtasks.is_empty() => {
-            return handle_plan(task, subtask, args, model_override, use_agent, auto_approve).await;
+            return handle_plan(
+                task,
+                subtask,
+                args,
+                model_override,
+                profile_override,
+                cli_no_tools,
+                cli_auto_approve,
+            )
+            .await;
         }
         Err(e) => return Err(e),
     };
@@ -614,11 +1067,38 @@ async fn smart_execute(
     let vars = template::find_variables(&section.content);
 
     if vars.is_empty() || args.len() >= vars.len() {
-        handle_run(task, subtask, args, model_override, use_agent, auto_approve).await
+        handle_run(
+            task,
+            subtask,
+            args,
+            model_override,
+            profile_override,
+            cli_no_tools,
+            cli_auto_approve,
+        )
+        .await
     } else if is_interactive() {
-        handle_plan(task, subtask, args, model_override, use_agent, auto_approve).await
+        handle_plan(
+            task,
+            subtask,
+            args,
+            model_override,
+            profile_override,
+            cli_no_tools,
+            cli_auto_approve,
+        )
+        .await
     } else {
-        handle_run(task, subtask, args, model_override, use_agent, auto_approve).await
+        handle_run(
+            task,
+            subtask,
+            args,
+            model_override,
+            profile_override,
+            cli_no_tools,
+            cli_auto_approve,
+        )
+        .await
     }
 }
 
@@ -641,68 +1121,16 @@ async fn main() -> anyhow::Result<()> {
         info!("Overriding model to: {}", model);
     }
 
-    let use_agent = !cli.no_tools;
-    let auto_approve = cli.yes;
     if cli.bill {
         reset_billing_stats();
     }
 
     let execution_result: anyhow::Result<()> = async {
         match &cli.command {
-            Some(Commands::Config) => {
-                if !is_interactive() {
-                    anyhow::bail!(
-                        "Cannot run `rai config` in non-interactive mode. \
-                         Set RAI_API_KEY and configure via environment variables or config file."
-                    );
-                }
-
-                info!("Config command selected");
-                let mut config = Config::load()?;
-
-                let providers = vec!["poe", "openai", "anthropic", "google"];
-                let default_provider_index = providers
-                    .iter()
-                    .position(|&p| p == config.provider)
-                    .unwrap_or(0);
-
-                let selection = Select::new()
-                    .with_prompt("Select AI Provider")
-                    .items(&providers)
-                    .default(default_provider_index)
-                    .interact_opt()?;
-
-                let provider = match selection {
-                    Some(index) => providers[index].to_string(),
-                    None => {
-                        println!("Operation cancelled.");
-                        return Ok(());
-                    }
-                };
-                config.provider = provider.clone();
-                config.providers = vec![provider.clone()];
-                config.default_provider = Some(provider.clone());
-
-                let api_key: String = Input::new()
-                    .with_prompt("API Key (saved to system keyring)")
-                    .default(String::new())
-                    .interact_text()?;
-
-                set_api_key_helper(&provider, &api_key)
-                    .context("Failed to save API key to keyring")?;
-
-                let default_model: String = Input::new()
-                    .with_prompt("Default Model")
-                    .default(if config.default_model.is_empty() {
-                        "gpt-4o".to_string()
-                    } else {
-                        config.default_model.clone()
-                    })
-                    .interact_text()?;
-                config.default_model = default_model;
-
-                config.save()?;
-                println!("Configuration saved successfully!");
+            Some(Commands::Start) => handle_start(cli.profile.as_deref())?,
+            Some(Commands::Config) => handle_config(cli.profile.as_deref())?,
+            Some(Commands::Profile { command }) => {
+                handle_profile_command(command, cli.profile.as_deref())?
             }
             Some(Commands::Run {
                 task,
@@ -716,8 +1144,9 @@ async fn main() -> anyhow::Result<()> {
                     resolved_subtask.as_deref(),
                     &clean_args,
                     cli.model.as_deref(),
-                    use_agent,
-                    auto_approve,
+                    cli.profile.as_deref(),
+                    cli.no_tools,
+                    cli.yes,
                 )
                 .await?;
             }
@@ -736,8 +1165,9 @@ async fn main() -> anyhow::Result<()> {
                     resolved_subtask.as_deref(),
                     &clean_args,
                     cli.model.as_deref(),
-                    use_agent,
-                    auto_approve,
+                    cli.profile.as_deref(),
+                    cli.no_tools,
+                    cli.yes,
                 )
                 .await?;
             }
@@ -749,8 +1179,9 @@ async fn main() -> anyhow::Result<()> {
                         subtask.as_deref(),
                         &clean_args,
                         cli.model.as_deref(),
-                        use_agent,
-                        auto_approve,
+                        cli.profile.as_deref(),
+                        cli.no_tools,
+                        cli.yes,
                     )
                     .await?;
                 } else {

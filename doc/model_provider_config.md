@@ -13,23 +13,43 @@ Currently, the following providers are supported:
 
 ## Configuration
 
-You can configure the provider and default model using the interactive config command:
+For first-time setup, use:
+
+```bash
+rai start
+```
+
+This guides you through:
+1. **AI Provider**: e.g., `poe`, `openai`.
+2. **API Key**: Securely stored in your system keyring.
+3. **Default Model**: e.g., `gpt-4o`, `claude-3-opus`.
+
+For advanced changes, use the config hub:
 
 ```bash
 rai config
 ```
 
-This will prompt you for:
-1. **AI Provider**: e.g., `poe`, `openai`.
-2. **API Key**: Securely stored in your system keyring.
-3. **Default Model**: e.g., `gpt-4o`, `claude-3-opus`.
+Profile settings are stored per file:
+- `~/.config/rai/config.toml` (global default/active profile)
+- `~/.config/rai/config.<profile>.toml` (profile settings)
 
-You can also configure providers manually in `~/.config/rai/config.toml`:
+Example:
 
 ```toml
+# ~/.config/rai/config.toml
+default_profile = "default"
+active_profile = "default"
+```
+
+```toml
+# ~/.config/rai/config.default.toml
 providers = ["poe", "openai"]
 default_provider = "poe"
 default_model = "gpt-4o"
+tool_mode = "ask"
+no_tools = false
+auto_approve = false
 ```
 
 Provider selection rules:
@@ -58,7 +78,7 @@ Rai automatically detects keys from standard environment variables used by other
 
 You can specify the model to use in two ways:
 
-1. **Default Model**: Set via `rai config` or in `~/.config/rai/config.toml`.
+1. **Default Model**: Set via `rai start`/`rai config` or in `config.<profile>.toml`.
 2. **Command Line Override**: Use the `--model` (or `-m`) flag.
 
 ```bash
@@ -81,6 +101,17 @@ The summary includes:
 - API calls
 - Input tokens
 - Output tokens
+
+## Profiles
+
+Use profiles to keep separate provider/model setups:
+
+```bash
+rai profile list
+rai profile create hard-task
+rai profile switch hard-task
+rai run "Review this code" --profile hard-task
+```
 
 ## Poe Integration (Phase 3)
 
