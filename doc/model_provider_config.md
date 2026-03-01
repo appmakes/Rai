@@ -115,7 +115,11 @@ Common tool-driven prompts:
 ```bash
 rai run "weather in Shanghai"
 rai run "whois google.com"
+rai run "search latest Rust 2025 edition updates"
+rai run "fetch https://ziglang.org and summarize"
 ```
+
+Nullclaw-compatible tool aliases are included (`file_read`, `file_write`, `file_append`, `file_edit`, `http_request`, `web_fetch`, `web_search`, `git_operations`) so cross-agent tool prompts map cleanly in Rai.
 
 ## Profiles
 

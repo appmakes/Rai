@@ -1,4 +1,5 @@
 pub mod builtin;
+pub mod extended;
 
 use crate::permission::Permission;
 use anyhow::Result;
@@ -45,6 +46,14 @@ pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
         Box::new(builtin::ListDirTool),
         Box::new(builtin::HttpGetTool),
         Box::new(builtin::WhoisTool),
+        Box::new(extended::FileReadTool),
+        Box::new(extended::FileWriteTool),
+        Box::new(extended::FileAppendTool),
+        Box::new(extended::FileEditTool),
+        Box::new(extended::HttpRequestTool),
+        Box::new(extended::WebFetchTool),
+        Box::new(extended::WebSearchTool),
+        Box::new(extended::GitOperationsTool),
     ]
 }
 
@@ -64,4 +73,34 @@ pub fn tools_to_api_json(tools: &[ToolDefinition]) -> Value {
         })
         .collect();
     Value::Array(tool_list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::builtin_tools;
+
+    #[test]
+    fn builtin_toolset_includes_nullclaw_compat_tools() {
+        let names = builtin_tools()
+            .into_iter()
+            .map(|tool| tool.definition().name)
+            .collect::<Vec<_>>();
+
+        for expected in [
+            "file_read",
+            "file_write",
+            "file_append",
+            "file_edit",
+            "http_request",
+            "web_fetch",
+            "web_search",
+            "git_operations",
+        ] {
+            assert!(
+                names.iter().any(|name| name == expected),
+                "missing tool '{}'",
+                expected
+            );
+        }
+    }
 }
