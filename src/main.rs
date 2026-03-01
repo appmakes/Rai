@@ -1832,7 +1832,7 @@ mod tests {
         let prompt = apply_status_contract_prompt("Solve this".to_string(), false);
         assert!(prompt.contains("[Output contract]"));
         assert!(prompt.contains("\"state\": \"success\" | \"fail\" | \"proceeding\""));
-        assert!(prompt.contains("Additional input"));
+        assert!(prompt.contains("additional input"));
     }
 
     #[test]
