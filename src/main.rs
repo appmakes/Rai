@@ -548,7 +548,6 @@ fn print_section(title: &str) {
 enum Style {
     Reset,
     Info,
-    Result,
     Billing,
 }
 
@@ -563,7 +562,6 @@ fn style_code(style: Style) -> &'static str {
     match style {
         Style::Reset => "\x1b[0m",
         Style::Info => "\x1b[36m",
-        Style::Result => "\x1b[1;32m",
         Style::Billing => "\x1b[35m",
     }
 }
@@ -578,12 +576,7 @@ fn print_info(message: &str) {
 }
 
 fn print_result(message: &str) {
-    println!(
-        "{}{}{}",
-        style_code(Style::Result),
-        message,
-        style_code(Style::Reset)
-    );
+    println!("{}", message);
 }
 
 fn try_handle_direct_prompt(task: &str) -> anyhow::Result<Option<String>> {
