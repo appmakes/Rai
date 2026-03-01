@@ -121,6 +121,8 @@ rai run "fetch https://ziglang.org and summarize"
 
 Nullclaw-compatible tool aliases are included (`file_read`, `file_write`, `file_append`, `file_edit`, `http_request`, `web_fetch`, `web_search`, `git_operations`) so cross-agent tool prompts map cleanly in Rai.
 
+For direct tool shortcuts (such as weather/whois), if the direct request fails, Rai now falls back to the AI agent so it can choose alternate tools and still complete the request.
+
 ## Profiles
 
 Use profiles to keep separate provider/model setups:
