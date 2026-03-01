@@ -612,18 +612,8 @@ fn try_handle_direct_prompt(task: &str) -> anyhow::Result<Option<String>> {
         }
         let encoded_location = location.split_whitespace().collect::<Vec<_>>().join("%20");
         let url = format!("https://wttr.in/{}?format=3", encoded_location);
-        let tool = tools::builtin::HttpGetTool;
+        let tool = tools::http_get::HttpGetTool;
         let output = tool.execute(&serde_json::json!({ "url": url }))?;
-        return Ok(Some(output.trim().to_string()));
-    }
-
-    if lowercase.starts_with("whois ") {
-        let domain = trimmed["whois ".len()..].trim();
-        if domain.is_empty() {
-            return Ok(None);
-        }
-        let tool = tools::builtin::WhoisTool;
-        let output = tool.execute(&serde_json::json!({ "domain": domain }))?;
         return Ok(Some(output.trim().to_string()));
     }
 

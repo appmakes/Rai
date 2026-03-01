@@ -280,7 +280,6 @@ impl Agent {
                     "http_get" | "http_request" | "web_fetch" => {
                         edited_args["url"] = serde_json::Value::String(edited.clone())
                     }
-                    "whois" => edited_args["domain"] = serde_json::Value::String(edited.clone()),
                     "web_search" => {
                         edited_args["query"] = serde_json::Value::String(edited.clone())
                     }
@@ -361,7 +360,6 @@ Rules:
 - If you need real-time data or system information, use the available tools.
 - Keep final answers short and clear.
 - Prefer `web_search` for discovery and `web_fetch` for page content.
-- For domain registration lookups, prefer the `whois` tool.
 - Prefer the most specific tool (e.g., `read_file` over `shell cat`).
 - For shell commands: use simple, portable commands when possible.
 - Never run destructive commands (rm -rf, drop table, etc.).

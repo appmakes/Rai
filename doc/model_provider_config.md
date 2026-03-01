@@ -114,14 +114,13 @@ Common tool-driven prompts:
 
 ```bash
 rai run "weather in Shanghai"
-rai run "whois google.com"
 rai run "search latest Rust 2025 edition updates"
 rai run "fetch https://ziglang.org and summarize"
 ```
 
 Nullclaw-compatible tool aliases are included (`file_read`, `file_write`, `file_append`, `file_edit`, `http_request`, `web_fetch`, `web_search`, `git_operations`) so cross-agent tool prompts map cleanly in Rai.
 
-For direct tool shortcuts (such as weather/whois), if the direct request fails, Rai now falls back to the AI agent so it can choose alternate tools and still complete the request.
+For direct tool shortcuts (such as weather), if the direct request fails, Rai now falls back to the AI agent so it can choose alternate tools and still complete the request.
 
 ## Profiles
 
