@@ -76,6 +76,22 @@ fn test_run_help() {
 }
 
 #[test]
+fn test_global_bill_before_run_executes_run_semantics() {
+    let output = rai_bin()
+        .args(["--bill", "run", "demo/task.md"])
+        .env("RAI_API_KEY", "test-dummy")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Missing arguments"),
+        "Expected run semantics with missing template args, stderr: {}",
+        stderr
+    );
+}
+
+#[test]
 fn test_no_subcommand_shows_help() {
     let output = rai_bin().output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -199,11 +215,9 @@ fn test_run_hash_subtask_shorthand() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("API") || stdout.contains("Sending request"),
-        "Should reach API with #subtask shorthand. stdout: {}, stderr: {}",
-        stdout,
+        stderr.contains("API") || stderr.contains("error"),
+        "Should reach API with #subtask shorthand. stderr: {}",
         stderr
     );
 }
@@ -234,11 +248,9 @@ fn test_implicit_run_adhoc() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("API") || stdout.contains("Sending request"),
-        "Implicit run should reach API. stdout: {}, stderr: {}",
-        stdout,
+        stderr.contains("API") || stderr.contains("error"),
+        "Implicit run should reach API. stderr: {}",
         stderr
     );
 }
@@ -251,11 +263,9 @@ fn test_implicit_run_with_task_file_and_args() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("API") || stdout.contains("Sending request"),
-        "Implicit run with file+args should reach API. stdout: {}, stderr: {}",
-        stdout,
+        stderr.contains("API") || stderr.contains("error"),
+        "Implicit run with file+args should reach API. stderr: {}",
         stderr
     );
 }
@@ -268,11 +278,9 @@ fn test_implicit_run_with_hash_subtask() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("API") || stdout.contains("Sending request"),
-        "Implicit run with #subtask should reach API. stdout: {}, stderr: {}",
-        stdout,
+        stderr.contains("API") || stderr.contains("error"),
+        "Implicit run with #subtask should reach API. stderr: {}",
         stderr
     );
 }

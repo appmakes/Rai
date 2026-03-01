@@ -1,8 +1,8 @@
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use config::Config;
 use dialoguer::{Confirm, Input, Select};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -17,11 +17,13 @@ mod template;
 mod tools;
 
 use providers::{get_billing_stats, reset_billing_stats, BillingStats, Provider};
+use tools::Tool;
 
 fn set_api_key_helper(provider: &str, api_key: &str) -> anyhow::Result<()> {
     key_store::set_api_key(provider, api_key)
 }
 
+#[cfg(not(test))]
 fn get_api_key_helper(provider: &str) -> anyhow::Result<String> {
     key_store::get_api_key(provider)
 }
@@ -75,6 +77,10 @@ struct Cli {
     /// Print API-call and token usage summary for this command
     #[arg(long, global = true)]
     bill: bool,
+
+    /// Show detailed runtime logs (tool calls, provider notices)
+    #[arg(long, global = true)]
+    log: bool,
 
     /// Select configuration profile
     #[arg(long, global = true)]
@@ -261,23 +267,65 @@ fn parse_shorthand_args(raw_args: &[String]) -> (Option<String>, Vec<String>) {
 }
 
 fn print_billing_summary(stats: BillingStats) {
-    println!("\n=== Billing Summary ===");
-    println!("API calls: {}", stats.api_calls);
-    println!("Input tokens: {}", stats.input_tokens);
-    println!("Output tokens: {}", stats.output_tokens);
+    println!();
+    println!(
+        "{}=== Billing Summary ==={}",
+        style_code(Style::Billing),
+        style_code(Style::Reset)
+    );
+    println!(
+        "{}API calls:{} {}",
+        style_code(Style::Info),
+        style_code(Style::Reset),
+        stats.api_calls
+    );
+    println!(
+        "{}Input tokens:{} {}",
+        style_code(Style::Info),
+        style_code(Style::Reset),
+        stats.input_tokens
+    );
+    println!(
+        "{}Output tokens:{} {}",
+        style_code(Style::Info),
+        style_code(Style::Reset),
+        stats.output_tokens
+    );
+}
+
+#[derive(Clone, Copy)]
+struct ExecutionOptions<'a> {
+    model_override: Option<&'a str>,
+    profile_override: Option<&'a str>,
+    cli_no_tools: bool,
+    cli_auto_approve: bool,
+    log_enabled: bool,
+}
+
+fn execution_options_from_cli(cli: &Cli) -> ExecutionOptions<'_> {
+    ExecutionOptions {
+        model_override: cli.model.as_deref(),
+        profile_override: cli.profile.as_deref(),
+        cli_no_tools: cli.no_tools,
+        cli_auto_approve: cli.yes,
+        log_enabled: cli.log,
+    }
 }
 
 async fn handle_run(
     task: &str,
     subtask: Option<&str>,
     args: &[String],
-    model_override: Option<&str>,
-    profile_override: Option<&str>,
-    cli_no_tools: bool,
-    cli_auto_approve: bool,
+    opts: ExecutionOptions<'_>,
 ) -> anyhow::Result<()> {
     let task_path = Path::new(task);
     let is_file = task_path.exists() && task_path.is_file();
+    if !is_file {
+        if let Some(direct_output) = try_handle_direct_prompt(task)? {
+            print_result(&direct_output);
+            return Ok(());
+        }
+    }
     let piped_stdin = if is_file {
         PipedStdin::NotPiped
     } else {
@@ -288,7 +336,7 @@ async fn handle_run(
         ensure_non_empty_piped_stdin(&piped_stdin)?;
     }
 
-    let mut config = Config::load(profile_override)?;
+    let mut config = Config::load(opts.profile_override)?;
     config.resolve_api_key()?;
 
     if config.api_key.is_empty() {
@@ -341,7 +389,8 @@ async fn handle_run(
 
         let rendered = template::render(&section.content, &variables)?;
 
-        let effective_model = model_override
+        let effective_model = opts
+            .model_override
             .map(|s| s.to_string())
             .or_else(|| parsed.effective_model(subtask))
             .unwrap_or(config.default_model.clone());
@@ -349,7 +398,8 @@ async fn handle_run(
         info!("Task: {} (section: {})", task, section.name);
         (rendered, effective_model)
     } else {
-        let model = model_override
+        let model = opts
+            .model_override
             .map(|s| s.to_string())
             .unwrap_or(config.default_model.clone());
         let piped_content = match &piped_stdin {
@@ -362,12 +412,12 @@ async fn handle_run(
     let provider_impl = resolve_provider(&config)?;
     info!("Using provider: {}, model: {}", config.provider, model);
 
-    let mut use_agent = if cli_no_tools {
+    let mut use_agent = if opts.cli_no_tools {
         false
     } else {
         !config.no_tools
     };
-    let mut auto_approve = cli_auto_approve || config.auto_approve;
+    let mut auto_approve = opts.cli_auto_approve || config.auto_approve;
     match config.tool_mode.as_str() {
         "allow" => auto_approve = true,
         "deny" => use_agent = false,
@@ -378,16 +428,19 @@ async fn handle_run(
         let builtin = tools::builtin_tools();
         let agent_config = agent::AgentConfig {
             auto_approve,
+            log_enabled: opts.log_enabled,
             ..Default::default()
         };
         let mut agent_loop = agent::Agent::new(provider_impl, model, builtin, agent_config);
 
         let response = agent_loop.run(&prompt).await?;
-        println!("{}", response);
+        print_result(&response);
     } else {
-        println!("Sending request to {}...", config.provider);
+        if opts.log_enabled {
+            print_info(&format!("Sending request to {}...", config.provider));
+        }
         let response = provider_impl.chat(&model, &prompt).await?;
-        println!("\nResponse:\n{}", response);
+        print_result(&response);
     }
 
     Ok(())
@@ -489,6 +542,77 @@ fn handle_create(filename: &str) -> anyhow::Result<()> {
 
 fn print_section(title: &str) {
     println!("\n=== {} ===", title);
+}
+
+#[derive(Clone, Copy)]
+enum Style {
+    Reset,
+    Info,
+    Result,
+    Billing,
+}
+
+fn color_output_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none() && atty::is(atty::Stream::Stdout)
+}
+
+fn style_code(style: Style) -> &'static str {
+    if !color_output_enabled() {
+        return "";
+    }
+    match style {
+        Style::Reset => "\x1b[0m",
+        Style::Info => "\x1b[36m",
+        Style::Result => "\x1b[1;32m",
+        Style::Billing => "\x1b[35m",
+    }
+}
+
+fn print_info(message: &str) {
+    println!(
+        "{}{}{}",
+        style_code(Style::Info),
+        message,
+        style_code(Style::Reset)
+    );
+}
+
+fn print_result(message: &str) {
+    println!(
+        "{}{}{}",
+        style_code(Style::Result),
+        message,
+        style_code(Style::Reset)
+    );
+}
+
+fn try_handle_direct_prompt(task: &str) -> anyhow::Result<Option<String>> {
+    let trimmed = task.trim();
+    let lowercase = trimmed.to_ascii_lowercase();
+
+    if lowercase.starts_with("weather in ") {
+        let location = trimmed["weather in ".len()..].trim();
+        if location.is_empty() {
+            return Ok(None);
+        }
+        let encoded_location = location.split_whitespace().collect::<Vec<_>>().join("%20");
+        let url = format!("https://wttr.in/{}?format=3", encoded_location);
+        let tool = tools::builtin::HttpGetTool;
+        let output = tool.execute(&serde_json::json!({ "url": url }))?;
+        return Ok(Some(output.trim().to_string()));
+    }
+
+    if lowercase.starts_with("whois ") {
+        let domain = trimmed["whois ".len()..].trim();
+        if domain.is_empty() {
+            return Ok(None);
+        }
+        let tool = tools::builtin::WhoisTool;
+        let output = tool.execute(&serde_json::json!({ "domain": domain }))?;
+        return Ok(Some(output.trim().to_string()));
+    }
+
+    Ok(None)
 }
 
 fn set_profile_api_key(profile: &str, provider: &str, api_key: &str) -> anyhow::Result<()> {
@@ -857,10 +981,7 @@ async fn handle_plan(
     task_file: &str,
     subtask: Option<&str>,
     prefilled_args: &[String],
-    model_override: Option<&str>,
-    profile_override: Option<&str>,
-    cli_no_tools: bool,
-    cli_auto_approve: bool,
+    opts: ExecutionOptions<'_>,
 ) -> anyhow::Result<()> {
     let path = Path::new(task_file);
     if !path.exists() {
@@ -1008,41 +1129,20 @@ async fn handle_plan(
         .filter_map(|name| mapped.get(name).cloned())
         .collect();
 
-    handle_run(
-        task_file,
-        subtask_opt,
-        &final_args,
-        model_override,
-        profile_override,
-        cli_no_tools,
-        cli_auto_approve,
-    )
-    .await
+    handle_run(task_file, subtask_opt, &final_args, opts).await
 }
 
 async fn smart_execute(
     task: &str,
     subtask: Option<&str>,
     args: &[String],
-    model_override: Option<&str>,
-    profile_override: Option<&str>,
-    cli_no_tools: bool,
-    cli_auto_approve: bool,
+    opts: ExecutionOptions<'_>,
 ) -> anyhow::Result<()> {
     let task_path = Path::new(task);
     let is_file = task_path.exists() && task_path.is_file();
 
     if !is_file {
-        return handle_run(
-            task,
-            subtask,
-            args,
-            model_override,
-            profile_override,
-            cli_no_tools,
-            cli_auto_approve,
-        )
-        .await;
+        return handle_run(task, subtask, args, opts).await;
     }
 
     let parsed = task_parser::parse_task_file(task_path)?;
@@ -1050,16 +1150,7 @@ async fn smart_execute(
     let section = match parsed.get_section(subtask) {
         Ok(s) => s,
         Err(_) if subtask.is_none() && !parsed.subtasks.is_empty() => {
-            return handle_plan(
-                task,
-                subtask,
-                args,
-                model_override,
-                profile_override,
-                cli_no_tools,
-                cli_auto_approve,
-            )
-            .await;
+            return handle_plan(task, subtask, args, opts).await;
         }
         Err(e) => return Err(e),
     };
@@ -1067,38 +1158,64 @@ async fn smart_execute(
     let vars = template::find_variables(&section.content);
 
     if vars.is_empty() || args.len() >= vars.len() {
-        handle_run(
-            task,
-            subtask,
-            args,
-            model_override,
-            profile_override,
-            cli_no_tools,
-            cli_auto_approve,
-        )
-        .await
+        handle_run(task, subtask, args, opts).await
     } else if is_interactive() {
-        handle_plan(
-            task,
-            subtask,
-            args,
-            model_override,
-            profile_override,
-            cli_no_tools,
-            cli_auto_approve,
-        )
-        .await
+        handle_plan(task, subtask, args, opts).await
     } else {
-        handle_run(
-            task,
-            subtask,
-            args,
-            model_override,
-            profile_override,
-            cli_no_tools,
-            cli_auto_approve,
-        )
-        .await
+        handle_run(task, subtask, args, opts).await
+    }
+}
+
+fn maybe_print_subcommand_help(name: &str) -> anyhow::Result<bool> {
+    let mut cmd = Cli::command();
+    let Some(sub) = cmd.find_subcommand_mut(name) else {
+        return Ok(false);
+    };
+    sub.write_long_help(&mut std::io::stdout())?;
+    std::io::stdout().write_all(b"\n")?;
+    Ok(true)
+}
+
+async fn dispatch_keyword_task_as_command(cli: &Cli, task_keyword: &str) -> anyhow::Result<bool> {
+    let opts = execution_options_from_cli(cli);
+    match task_keyword {
+        "run" => {
+            if cli.args.is_empty() {
+                anyhow::bail!("Missing task. Usage: rai run <task>");
+            }
+            if cli.args.iter().any(|arg| arg == "-h" || arg == "--help") {
+                maybe_print_subcommand_help("run")?;
+                return Ok(true);
+            }
+            let task = cli.args[0].clone();
+            let trailing_args = cli.args[1..].to_vec();
+            let (resolved_subtask, clean_args) = extract_subtask_from_args(None, &trailing_args);
+            handle_run(&task, resolved_subtask.as_deref(), &clean_args, opts).await?;
+            Ok(true)
+        }
+        "plan" => {
+            if cli.args.is_empty() {
+                anyhow::bail!("Missing task file. Usage: rai plan <task_file>");
+            }
+            if cli.args.iter().any(|arg| arg == "-h" || arg == "--help") {
+                maybe_print_subcommand_help("plan")?;
+                return Ok(true);
+            }
+            let task_file = cli.args[0].clone();
+            let trailing_args = cli.args[1..].to_vec();
+            let (resolved_subtask, clean_args) = extract_subtask_from_args(None, &trailing_args);
+            handle_plan(&task_file, resolved_subtask.as_deref(), &clean_args, opts).await?;
+            Ok(true)
+        }
+        "start" if cli.args.is_empty() => {
+            handle_start(cli.profile.as_deref())?;
+            Ok(true)
+        }
+        "config" if cli.args.is_empty() => {
+            handle_config(cli.profile.as_deref())?;
+            Ok(true)
+        }
+        _ => Ok(false),
     }
 }
 
@@ -1143,10 +1260,7 @@ async fn main() -> anyhow::Result<()> {
                     task,
                     resolved_subtask.as_deref(),
                     &clean_args,
-                    cli.model.as_deref(),
-                    cli.profile.as_deref(),
-                    cli.no_tools,
-                    cli.yes,
+                    execution_options_from_cli(&cli),
                 )
                 .await?;
             }
@@ -1164,28 +1278,24 @@ async fn main() -> anyhow::Result<()> {
                     task_file,
                     resolved_subtask.as_deref(),
                     &clean_args,
-                    cli.model.as_deref(),
-                    cli.profile.as_deref(),
-                    cli.no_tools,
-                    cli.yes,
+                    execution_options_from_cli(&cli),
                 )
                 .await?;
             }
             None => {
                 if let Some(task) = &cli.task {
+                    if dispatch_keyword_task_as_command(&cli, task).await? {
+                        return Ok(());
+                    }
                     let (subtask, clean_args) = extract_subtask_from_args(None, &cli.args);
                     smart_execute(
                         task,
                         subtask.as_deref(),
                         &clean_args,
-                        cli.model.as_deref(),
-                        cli.profile.as_deref(),
-                        cli.no_tools,
-                        cli.yes,
+                        execution_options_from_cli(&cli),
                     )
                     .await?;
                 } else {
-                    use clap::CommandFactory;
                     Cli::command().print_help()?;
                 }
             }
