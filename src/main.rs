@@ -1416,8 +1416,10 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::{
         append_direct_tool_failure_note, apply_think_mode_prompt, compose_adhoc_prompt,
-        ensure_non_empty_piped_stdin, extract_thinking_blocks, parse_shorthand_args, PipedStdin,
+        ensure_non_empty_piped_stdin, extract_thinking_blocks, parse_shorthand_args, Cli,
+        PipedStdin,
     };
+    use clap::Parser;
 
     #[test]
     fn test_compose_adhoc_prompt_without_stdin() {
@@ -1496,5 +1498,23 @@ mod tests {
         let (thoughts, cleaned) = extract_thinking_blocks(response);
         assert_eq!(thoughts, vec!["step 1\nstep 2".to_string()]);
         assert_eq!(cleaned.trim(), "Final answer");
+    }
+
+    #[test]
+    fn test_cli_parses_detail_flag() {
+        let cli = Cli::parse_from(["rai", "--detail", "run", "hello"]);
+        assert!(cli.detail);
+    }
+
+    #[test]
+    fn test_cli_parses_legacy_log_alias_as_detail() {
+        let cli = Cli::parse_from(["rai", "--log", "run", "hello"]);
+        assert!(cli.detail);
+    }
+
+    #[test]
+    fn test_cli_parses_think_flag() {
+        let cli = Cli::parse_from(["rai", "--think", "run", "hello"]);
+        assert!(cli.think);
     }
 }
