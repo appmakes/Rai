@@ -269,14 +269,14 @@ enum UserFinalState {
     Fail,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct FollowupRequest {
     prompt: String,
     options: Vec<String>,
     description: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ResponseDirective {
     Done,
     NeedsInput(FollowupRequest),
