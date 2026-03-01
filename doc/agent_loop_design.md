@@ -59,8 +59,8 @@ Rai ships with a small set of built-in tools that the AI can invoke:
 | Tool | Description | Default Permission |
 |------|-------------|--------------------|
 | `shell` | Execute a shell command and return stdout/stderr | `ask` |
-| `read_file` | Read a file's contents | `allow` |
-| `write_file` | Write content to a file | `ask` |
+| `file_read` | Read a file's contents | `allow` |
+| `file_write` | Write content to a file | `ask` |
 | `list_dir` | List files in a directory | `allow` |
 | `http_get` | Fetch a URL and return the body | `allow` |
 
@@ -141,7 +141,7 @@ Each tool has a `permission` field with one of six values, ordered from most per
 ```toml
 # Auto-approve all invocations
 [[tools]]
-name = "read_file"
+name = "file_read"
 permission = "allow"
 
 # Allow shell, but block destructive patterns
@@ -156,7 +156,7 @@ permission = "ask_once"
 
 # Ask every single time
 [[tools]]
-name = "write_file"
+name = "file_write"
 permission = "ask"
 
 # Only allow curl and wget commands through shell
@@ -166,7 +166,7 @@ permission = "whitelist: ^curl\\s|^wget\\s"
 
 # Completely disabled
 [[tools]]
-name = "write_file"
+name = "file_write"
 permission = "deny"
 ```
 
@@ -177,8 +177,8 @@ permission = "deny"
 | Tool | Pattern matches against | Example |
 |------|------------------------|---------|
 | `shell` | The full command string | `rm -rf /tmp/data` |
-| `read_file` | The file path | `/etc/passwd` |
-| `write_file` | The file path | `src/main.rs` |
+| `file_read` | The file path | `/etc/passwd` |
+| `file_write` | The file path | `src/main.rs` |
 | `list_dir` | The directory path | `/home/user` |
 | `http_get` | The full URL | `https://evil.com/steal` |
 | User-defined | The interpolated `command` string | `curl -s 'wttr.in/Shanghai'` |
@@ -354,7 +354,7 @@ A task can disable a globally available tool:
 ```yaml
 ---
 tools:
-  - name: write_file
+  - name: file_write
     permission: deny
   - name: shell
     permission: "whitelist: ^cat\\s|^ls\\s|^grep\\s"
@@ -426,7 +426,7 @@ You are Rai, a CLI assistant. You have access to tools to help answer questions.
 Rules:
 - If you can answer directly from your knowledge, do so without tools.
 - If you need real-time data or system information, use the available tools.
-- Prefer the most specific tool available (e.g., `read_file` over `shell cat`).
+- Prefer the most specific tool available (e.g., `file_read` over `shell cat`).
 - For shell commands: use simple, portable, read-only commands when possible.
 - Never run destructive commands (rm -rf, drop table, etc.).
 - If a tool call is rejected, explain what you needed and suggest alternatives.
@@ -470,7 +470,7 @@ rai --ask-all "do something complex"
 # Disable all tool calling (single-turn only)
 rai --no-tools "just answer from your knowledge"
 
-# Read-only mode: deny write_file, restrict shell
+# Read-only mode: deny file_write, restrict shell
 rai --read-only "analyze my project structure"
 ```
 
@@ -479,7 +479,7 @@ rai --read-only "analyze my project structure"
 | `--yes` | Treat `ask` and `ask_once` as `allow`. Global blocklist still enforced. |
 | `--ask-all` | Treat every tool as `ask`. Override `allow` to require confirmation. |
 | `--no-tools` | Disable agent loop entirely. Single-turn mode. |
-| `--read-only` | Set `write_file` to `deny`, restrict `shell` to read-only patterns. |
+| `--read-only` | Set `file_write` to `deny`, restrict `shell` to read-only patterns. |
 
 ## 11. CI/CD Considerations
 
@@ -622,7 +622,7 @@ agent: true
 tools:
   - name: shell
     permission: "whitelist: ^cat\\s|^wc\\s|^grep\\s"
-  - name: write_file
+  - name: file_write
     permission: deny
 ---
 # Code Review
@@ -648,7 +648,7 @@ Found 3 potential issues:
 | C.1 | Provider trait extension (`chat_with_tools`), `ProviderResponse` types | — |
 | C.2 | Permission system: parsing, resolution, two-layer check | — |
 | C.3 | Agent loop core: iteration, tool dispatch, conversation management | C.1, C.2 |
-| C.4 | Built-in tools: `shell`, `read_file`, `write_file`, `list_dir`, `http_get` | C.3 |
+| C.4 | Built-in tools: `shell`, `file_read`, `file_write`, `list_dir`, `http_get` | C.3 |
 | C.5 | Interactive approval prompt (Yes/No/Edit/Always) | C.3 |
 | C.6 | User-defined tools: `tools.toml` parsing, task-file tool merging | C.4 |
 | C.7 | Task-level overrides: restriction enforcement, pattern merging | C.6 |

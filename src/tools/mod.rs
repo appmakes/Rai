@@ -7,12 +7,10 @@ pub mod http_get;
 pub mod http_request;
 pub mod list_dir;
 pub mod path_security;
-pub mod read_file;
 pub mod shell;
 pub mod utils;
 pub mod web_fetch;
 pub mod web_search;
-pub mod write_file;
 
 use crate::permission::Permission;
 use anyhow::Result;
@@ -54,8 +52,6 @@ pub trait Tool: Send + Sync {
 pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(shell::ShellTool),
-        Box::new(read_file::ReadFileTool),
-        Box::new(write_file::WriteFileTool),
         Box::new(list_dir::ListDirTool),
         Box::new(http_get::HttpGetTool),
         Box::new(file_read::FileReadTool),
@@ -100,8 +96,6 @@ mod tests {
 
         for expected in [
             "shell",
-            "read_file",
-            "write_file",
             "list_dir",
             "http_get",
             "file_read",
