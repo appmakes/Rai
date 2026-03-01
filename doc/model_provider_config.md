@@ -102,6 +102,21 @@ The summary includes:
 - Input tokens
 - Output tokens
 
+For detailed runtime logs (tool calls/provider notices), add `--log`:
+
+```bash
+rai run "whois google.com" --bill --log
+```
+
+By default, Rai keeps `run` output concise and highlights the final answer.
+
+Common tool-driven prompts:
+
+```bash
+rai run "weather in Shanghai"
+rai run "whois google.com"
+```
+
 ## Profiles
 
 Use profiles to keep separate provider/model setups:

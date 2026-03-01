@@ -12,6 +12,7 @@ pub struct AgentConfig {
     pub auto_approve: bool,
     pub max_iterations: usize,
     pub blocked_patterns: Vec<String>,
+    pub log_enabled: bool,
 }
 
 impl Default for AgentConfig {
@@ -20,6 +21,7 @@ impl Default for AgentConfig {
             auto_approve: false,
             max_iterations: DEFAULT_MAX_ITERATIONS,
             blocked_patterns: Vec::new(),
+            log_enabled: false,
         }
     }
 }
@@ -123,7 +125,9 @@ impl Agent {
 
         // Layer 1: Global blocklist
         if let Some(reason) = check_global_blocklist(&match_target, &self.config.blocked_patterns) {
-            eprintln!("[rai] {} → {}  ✗ ({})", tc.name, match_target, reason);
+            if self.config.log_enabled {
+                eprintln!("[rai] {} → {}  ✗ ({})", tc.name, match_target, reason);
+            }
             return Ok(crate::tools::ToolResult {
                 tool_call_id: tc.id.clone(),
                 output: format!("Blocked: {}", reason),
@@ -156,7 +160,9 @@ impl Agent {
 
         match decision {
             PermissionDecision::Allow => {
-                eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
+                if self.config.log_enabled {
+                    eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
+                }
                 match self.tools[tool_idx].execute(&tc.arguments) {
                     Ok(output) => Ok(crate::tools::ToolResult {
                         tool_call_id: tc.id.clone(),
@@ -171,7 +177,9 @@ impl Agent {
                 }
             }
             PermissionDecision::Deny(reason) => {
-                eprintln!("[rai] {}: {}  ✗ ({})", tc.name, match_target, reason);
+                if self.config.log_enabled {
+                    eprintln!("[rai] {}: {}  ✗ ({})", tc.name, match_target, reason);
+                }
                 Ok(crate::tools::ToolResult {
                     tool_call_id: tc.id.clone(),
                     output: format!("Denied: {}", reason),
@@ -190,10 +198,12 @@ impl Agent {
         let match_target = self.tools[tool_idx].match_target(&tc.arguments);
 
         if !atty::is(atty::Stream::Stdin) {
-            eprintln!(
-                "[rai] {}: {}  ✗ (non-interactive, use --yes to auto-approve)",
-                tc.name, match_target
-            );
+            if self.config.log_enabled {
+                eprintln!(
+                    "[rai] {}: {}  ✗ (non-interactive, use --yes to auto-approve)",
+                    tc.name, match_target
+                );
+            }
             return Ok(crate::tools::ToolResult {
                 tool_call_id: tc.id.clone(),
                 output: "Denied: non-interactive mode. Use --yes to auto-approve.".to_string(),
@@ -220,7 +230,9 @@ impl Agent {
                 ) {
                     self.ask_once_memory.insert(tc.name.clone(), true);
                 }
-                eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
+                if self.config.log_enabled {
+                    eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
+                }
                 match self.tools[tool_idx].execute(&tc.arguments) {
                     Ok(output) => Ok(crate::tools::ToolResult {
                         tool_call_id: tc.id.clone(),
@@ -242,7 +254,9 @@ impl Agent {
                 ) {
                     self.ask_once_memory.insert(tc.name.clone(), false);
                 }
-                eprintln!("[rai] {}: {}  ✗ (user denied)", tc.name, match_target);
+                if self.config.log_enabled {
+                    eprintln!("[rai] {}: {}  ✗ (user denied)", tc.name, match_target);
+                }
                 Ok(crate::tools::ToolResult {
                     tool_call_id: tc.id.clone(),
                     output: "Denied by user.".to_string(),
@@ -263,12 +277,15 @@ impl Agent {
                         edited_args["path"] = serde_json::Value::String(edited.clone())
                     }
                     "http_get" => edited_args["url"] = serde_json::Value::String(edited.clone()),
+                    "whois" => edited_args["domain"] = serde_json::Value::String(edited.clone()),
                     _ => edited_args["command"] = serde_json::Value::String(edited.clone()),
                 }
 
                 if let Some(reason) = check_global_blocklist(&edited, &self.config.blocked_patterns)
                 {
-                    eprintln!("[rai] Edited command also blocked: {}", reason);
+                    if self.config.log_enabled {
+                        eprintln!("[rai] Edited command also blocked: {}", reason);
+                    }
                     return Ok(crate::tools::ToolResult {
                         tool_call_id: tc.id.clone(),
                         output: format!("Blocked: {}", reason),
@@ -276,7 +293,9 @@ impl Agent {
                     });
                 }
 
-                eprintln!("[rai] {}: {}  ✓ (edited)", tc.name, edited);
+                if self.config.log_enabled {
+                    eprintln!("[rai] {}: {}  ✓ (edited)", tc.name, edited);
+                }
                 match self.tools[tool_idx].execute(&edited_args) {
                     Ok(output) => Ok(crate::tools::ToolResult {
                         tool_call_id: tc.id.clone(),
@@ -293,8 +312,10 @@ impl Agent {
             Some(3) => {
                 // Always
                 self.config.auto_approve = true;
-                eprintln!("[rai] Auto-approving all remaining tool calls this session.");
-                eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
+                if self.config.log_enabled {
+                    eprintln!("[rai] Auto-approving all remaining tool calls this session.");
+                    eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
+                }
                 match self.tools[tool_idx].execute(&tc.arguments) {
                     Ok(output) => Ok(crate::tools::ToolResult {
                         tool_call_id: tc.id.clone(),
@@ -329,6 +350,8 @@ fn build_system_prompt() -> String {
 Rules:
 - If you can answer directly from your knowledge, do so without tools.
 - If you need real-time data or system information, use the available tools.
+- Keep final answers short and clear.
+- For domain registration lookups, prefer the `whois` tool.
 - Prefer the most specific tool (e.g., `read_file` over `shell cat`).
 - For shell commands: use simple, portable commands when possible.
 - Never run destructive commands (rm -rf, drop table, etc.).

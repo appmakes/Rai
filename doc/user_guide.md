@@ -45,6 +45,13 @@ Run a simple prompt directly from the command line:
 rai "Explain quantum computing in one sentence"
 ```
 
+Examples that trigger built-in tools:
+
+```bash
+rai run "weather in Shanghai"
+rai run "whois google.com"
+```
+
 ### 4.2 File-based Tasks
 For more complex or reusable workflows, define your task in a Markdown file (e.g., `task.md`) and run it:
 
@@ -79,6 +86,21 @@ At the end of execution, Rai prints:
 - API calls made
 - Input tokens used
 - Output tokens used
+
+### 4.6 Clean vs Detailed Output (`--log`)
+By default, `rai run` keeps output short and highlights the final answer for faster scanning.
+
+Use `--log` when you want detailed runtime info (tool calls, provider notices):
+
+```bash
+rai run "weather in Shanghai" --log
+```
+
+Tip for local dev: when using Cargo, `cargo run` itself prints build/run lines. Use quiet mode for cleaner output:
+
+```bash
+cargo run -q -- run "weather in Shanghai" --bill
+```
 
 ## 5. Profiles
 

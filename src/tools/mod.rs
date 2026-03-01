@@ -44,6 +44,7 @@ pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
         Box::new(builtin::WriteFileTool),
         Box::new(builtin::ListDirTool),
         Box::new(builtin::HttpGetTool),
+        Box::new(builtin::WhoisTool),
     ]
 }
 
