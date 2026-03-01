@@ -432,6 +432,7 @@ Rules:
 - If you need real-time data or system information, use the available tools.
 - Keep final answers short and clear.
 - Prefer `web_search` for discovery and `web_fetch` for page content.
+- If unsure which tools are available, call `ls_tools` first.
 - Prefer the most specific tool (e.g., `file_read` over `shell cat`).
 - For shell commands: use simple, portable commands when possible.
 - Never run destructive commands (rm -rf, drop table, etc.).
