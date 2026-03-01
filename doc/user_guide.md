@@ -52,6 +52,8 @@ rai run "weather in Shanghai"
 rai run "whois google.com"
 ```
 
+If a direct built-in lookup fails (for example network issues), Rai falls back to the AI agent to choose alternative tools/sources and continue toward a final answer.
+
 ### 4.2 File-based Tasks
 For more complex or reusable workflows, define your task in a Markdown file (e.g., `task.md`) and run it:
 
