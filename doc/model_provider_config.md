@@ -110,15 +110,12 @@ rai run "weather in Shanghai" --bill --detail
 
 Detailed provider exchanges are numbered as `request #N` and `response #N`.
 
-Rai also requests a final model status line:
+Rai uses an internal model status contract and shows a user-facing final state:
 
-- `STATUS: success`
-- `STATUS: success_with_warnings`
-- `STATUS: success_but_can_go_deeper`
-- `STATUS: failed_and_end_the_loop`
-- `STATUS: failed_but_need_further_steps`
+- `success`
+- `fail`
 
-Failed statuses (or clear inability responses) are treated as command failure and return a non-zero exit code.
+Failures (including inability responses) are treated as command failure and return a non-zero exit code.
 
 By default, Rai keeps `run` output concise and prints the final answer in your terminal's default text color.
 
