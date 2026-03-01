@@ -4,6 +4,8 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::Write as _;
 
+use crate::tools::path_security::ensure_not_system_critical_path;
+
 pub struct FileAppendTool;
 
 impl Tool for FileAppendTool {
@@ -38,6 +40,7 @@ impl Tool for FileAppendTool {
         let content = args["content"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'content' argument"))?;
+        ensure_not_system_critical_path(path)?;
 
         let mut file = std::fs::OpenOptions::new()
             .create(true)

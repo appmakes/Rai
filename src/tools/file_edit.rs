@@ -3,6 +3,8 @@ use crate::permission::Permission;
 use anyhow::Result;
 use serde_json::{json, Value};
 
+use crate::tools::path_security::ensure_not_system_critical_path;
+
 pub struct FileEditTool;
 
 impl Tool for FileEditTool {
@@ -36,6 +38,7 @@ impl Tool for FileEditTool {
         let path = args["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
+        ensure_not_system_critical_path(path)?;
         let old_text = args["old_text"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'old_text' argument"))?;

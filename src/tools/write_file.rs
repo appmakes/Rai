@@ -3,6 +3,8 @@ use crate::permission::Permission;
 use anyhow::Result;
 use serde_json::{json, Value};
 
+use crate::tools::path_security::ensure_not_system_critical_path;
+
 pub struct WriteFileTool;
 
 impl Tool for WriteFileTool {
@@ -37,6 +39,7 @@ impl Tool for WriteFileTool {
         let content = args["content"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'content' argument"))?;
+        ensure_not_system_critical_path(path)?;
 
         std::fs::write(path, content)
             .map_err(|e| anyhow::anyhow!("Failed to write file '{}': {}", path, e))?;

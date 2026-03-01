@@ -124,6 +124,8 @@ Nullclaw-compatible tool aliases are included (`file_read`, `file_write`, `file_
 
 For direct tool shortcuts (such as weather), if the direct request fails, Rai now falls back to the AI agent so it can choose alternate tools and still complete the request.
 
+On Unix, filesystem and git-path operations enforce a hard safety block on system-critical prefixes (for example `/etc`, `/bin`, `/usr/bin`, `/dev`, `/proc`, `/sys`) regardless of other allow rules.
+
 ## Profiles
 
 Use profiles to keep separate provider/model setups:
