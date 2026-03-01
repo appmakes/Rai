@@ -675,17 +675,18 @@ fn extract_thinking_blocks(response: &str) -> (Vec<String>, String) {
 
 fn print_processed_response(response: &str, think_enabled: bool) {
     let (thoughts, cleaned) = extract_thinking_blocks(response);
+    let has_thoughts = !thoughts.is_empty();
     if think_enabled {
-        if thoughts.is_empty() {
+        if !has_thoughts {
             print_thinking("No thinking chain returned by provider.");
         } else {
-            for thought in thoughts {
+            for thought in &thoughts {
                 print_thinking(&thought);
             }
         }
     }
 
-    let candidate = if thoughts.is_empty() {
+    let candidate = if !has_thoughts {
         response.trim()
     } else {
         cleaned.trim()
