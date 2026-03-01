@@ -12,7 +12,8 @@ pub struct AgentConfig {
     pub auto_approve: bool,
     pub max_iterations: usize,
     pub blocked_patterns: Vec<String>,
-    pub log_enabled: bool,
+    pub detail_enabled: bool,
+    pub think_enabled: bool,
 }
 
 impl Default for AgentConfig {
@@ -21,7 +22,8 @@ impl Default for AgentConfig {
             auto_approve: false,
             max_iterations: DEFAULT_MAX_ITERATIONS,
             blocked_patterns: Vec::new(),
-            log_enabled: false,
+            detail_enabled: false,
+            think_enabled: false,
         }
     }
 }
@@ -51,7 +53,7 @@ impl Agent {
     }
 
     pub async fn run(&mut self, prompt: &str) -> Result<String> {
-        let system_prompt = build_system_prompt();
+        let system_prompt = build_system_prompt(self.config.think_enabled);
         let tool_defs: Vec<ToolDefinition> = self.tools.iter().map(|t| t.definition()).collect();
 
         let active_tools: Vec<ToolDefinition> = tool_defs
@@ -69,6 +71,9 @@ impl Agent {
                 iteration + 1,
                 self.config.max_iterations
             );
+            if self.config.detail_enabled {
+                print_detail_prompt(&format_messages_for_detail(&messages));
+            }
 
             let response = self
                 .provider
@@ -77,9 +82,15 @@ impl Agent {
 
             match response {
                 ProviderResponse::Text(text) => {
+                    if self.config.detail_enabled {
+                        print_detail_response(&text);
+                    }
                     return Ok(text);
                 }
                 ProviderResponse::ToolCalls(tool_calls) => {
+                    if self.config.detail_enabled {
+                        print_detail_response(&format_tool_calls_for_detail(&tool_calls));
+                    }
                     messages.push(Message::assistant_tool_calls(&tool_calls));
 
                     for tc in &tool_calls {
@@ -125,7 +136,7 @@ impl Agent {
 
         // Layer 1: Global blocklist
         if let Some(reason) = check_global_blocklist(&match_target, &self.config.blocked_patterns) {
-            if self.config.log_enabled {
+            if self.config.detail_enabled {
                 eprintln!("[rai] {} → {}  ✗ ({})", tc.name, match_target, reason);
             }
             return Ok(crate::tools::ToolResult {
@@ -160,7 +171,7 @@ impl Agent {
 
         match decision {
             PermissionDecision::Allow => {
-                if self.config.log_enabled {
+                if self.config.detail_enabled {
                     eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
                 }
                 match self.tools[tool_idx].execute(&tc.arguments) {
@@ -177,7 +188,7 @@ impl Agent {
                 }
             }
             PermissionDecision::Deny(reason) => {
-                if self.config.log_enabled {
+                if self.config.detail_enabled {
                     eprintln!("[rai] {}: {}  ✗ ({})", tc.name, match_target, reason);
                 }
                 Ok(crate::tools::ToolResult {
@@ -198,7 +209,7 @@ impl Agent {
         let match_target = self.tools[tool_idx].match_target(&tc.arguments);
 
         if !atty::is(atty::Stream::Stdin) {
-            if self.config.log_enabled {
+            if self.config.detail_enabled {
                 eprintln!(
                     "[rai] {}: {}  ✗ (non-interactive, use --yes to auto-approve)",
                     tc.name, match_target
@@ -230,7 +241,7 @@ impl Agent {
                 ) {
                     self.ask_once_memory.insert(tc.name.clone(), true);
                 }
-                if self.config.log_enabled {
+                if self.config.detail_enabled {
                     eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
                 }
                 match self.tools[tool_idx].execute(&tc.arguments) {
@@ -254,7 +265,7 @@ impl Agent {
                 ) {
                     self.ask_once_memory.insert(tc.name.clone(), false);
                 }
-                if self.config.log_enabled {
+                if self.config.detail_enabled {
                     eprintln!("[rai] {}: {}  ✗ (user denied)", tc.name, match_target);
                 }
                 Ok(crate::tools::ToolResult {
@@ -291,7 +302,7 @@ impl Agent {
 
                 if let Some(reason) = check_global_blocklist(&edited, &self.config.blocked_patterns)
                 {
-                    if self.config.log_enabled {
+                    if self.config.detail_enabled {
                         eprintln!("[rai] Edited command also blocked: {}", reason);
                     }
                     return Ok(crate::tools::ToolResult {
@@ -301,7 +312,7 @@ impl Agent {
                     });
                 }
 
-                if self.config.log_enabled {
+                if self.config.detail_enabled {
                     eprintln!("[rai] {}: {}  ✓ (edited)", tc.name, edited);
                 }
                 match self.tools[tool_idx].execute(&edited_args) {
@@ -320,7 +331,7 @@ impl Agent {
             Some(3) => {
                 // Always
                 self.config.auto_approve = true;
-                if self.config.log_enabled {
+                if self.config.detail_enabled {
                     eprintln!("[rai] Auto-approving all remaining tool calls this session.");
                     eprintln!("[rai] {}: {}  ✓", tc.name, match_target);
                 }
@@ -346,11 +357,16 @@ impl Agent {
     }
 }
 
-fn build_system_prompt() -> String {
+fn build_system_prompt(think_enabled: bool) -> String {
     let os = std::env::consts::OS;
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| ".".to_string());
+    let think_rule = if think_enabled {
+        "- Think mode is enabled. Include your full reasoning chain inside <think>...</think> before the final answer.\n"
+    } else {
+        ""
+    };
 
     format!(
         r#"You are Rai, a CLI assistant with access to tools.
@@ -365,10 +381,87 @@ Rules:
 - Never run destructive commands (rm -rf, drop table, etc.).
 - If a tool call is rejected, explain what you needed and suggest alternatives.
 - Keep tool usage minimal — only call tools when necessary.
+{}
 
 Environment:
 - OS: {}
 - Working directory: {}"#,
-        os, cwd
+        think_rule, os, cwd
     )
+}
+
+fn color_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none() && atty::is(atty::Stream::Stdout)
+}
+
+fn print_detail_prompt(message: &str) {
+    if color_enabled() {
+        println!("\x1b[34m[detail][prompt]\x1b[0m {}", message);
+    } else {
+        println!("[detail][prompt] {}", message);
+    }
+}
+
+fn print_detail_response(message: &str) {
+    if color_enabled() {
+        println!("\x1b[33m[detail][response]\x1b[0m {}", message);
+    } else {
+        println!("[detail][response] {}", message);
+    }
+}
+
+fn format_messages_for_detail(messages: &[Message]) -> String {
+    let mut output = String::new();
+    for message in messages {
+        match message {
+            Message::System { content } => {
+                output.push_str("[system]\n");
+                output.push_str(content);
+                output.push('\n');
+            }
+            Message::User { content } => {
+                output.push_str("[user]\n");
+                output.push_str(content);
+                output.push('\n');
+            }
+            Message::AssistantToolCalls {
+                content,
+                tool_calls,
+            } => {
+                output.push_str("[assistant_tool_calls]\n");
+                if let Some(value) = content {
+                    output.push_str(value);
+                    output.push('\n');
+                }
+                for call in tool_calls {
+                    output.push_str(&format!(
+                        "- {}({}) id={}\n",
+                        call.function.name, call.function.arguments, call.id
+                    ));
+                }
+            }
+            Message::ToolResult {
+                tool_call_id,
+                content,
+            } => {
+                output.push_str("[tool_result]\n");
+                output.push_str(&format!("id={}\n{}\n", tool_call_id, content));
+            }
+        }
+    }
+    output.trim_end().to_string()
+}
+
+fn format_tool_calls_for_detail(tool_calls: &[ToolCall]) -> String {
+    if tool_calls.is_empty() {
+        return "Tool calls requested: none".to_string();
+    }
+    let mut output = String::from("Tool calls requested:\n");
+    for call in tool_calls {
+        output.push_str(&format!(
+            "- {}({}) id={}\n",
+            call.name, call.arguments, call.id
+        ));
+    }
+    output.trim_end().to_string()
 }
