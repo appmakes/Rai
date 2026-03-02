@@ -599,9 +599,22 @@ async fn handle_run(
     let mut config = Config::load(opts.profile_override)?;
     config.resolve_api_key()?;
 
+    // If current provider has no key, use the first provider that has credentials (env or keyring)
+    if config.api_key.is_empty() {
+        for provider in available_providers() {
+            if let Some(key) = get_key_for_provider(&config.profile, provider) {
+                config.provider = provider.to_string();
+                config.providers = vec![provider.to_string()];
+                config.default_provider = Some(provider.to_string());
+                config.api_key = key;
+                break;
+            }
+        }
+    }
+
     if config.api_key.is_empty() {
         anyhow::bail!(
-            "No API key found. Please run `rai config` or set RAI_API_KEY environment variable."
+            "No API key found. Set a provider-specific env var (e.g. POE_API_KEY) or add a .env file, or run `rai config` to save a key to keyring."
         );
     }
 
@@ -1262,23 +1275,136 @@ fn set_profile_api_key(profile: &str, provider: &str, api_key: &str) -> anyhow::
         .context("Failed to save profile-scoped API key to keyring")?;
     // Backward-compatible fallback key.
     let _ = set_api_key_helper(provider, api_key);
+
+    // Verify we can immediately read the just-saved key to catch keyring issues early.
+    #[cfg(not(test))]
+    {
+        if get_api_key_helper(&scoped_provider).is_err() {
+            anyhow::bail!(
+                "API key was not readable from keyring after save. Check OS keyring access permissions and try again."
+            );
+        }
+    }
+
     Ok(())
+}
+
+/// Returns the API key for a provider from env vars only (no keyring).
+fn get_key_for_provider_from_env(provider: &str) -> Option<String> {
+    let provider = provider.trim().to_lowercase();
+    let env_candidates: Vec<&str> = match provider.as_str() {
+        "openai" => vec!["OPENAI_API_KEY"],
+        "anthropic" | "claude" => vec!["ANTHROPIC_API_KEY"],
+        "gemini" | "google" => vec!["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "poe" => vec!["POE_API_KEY"],
+        _ => vec![],
+    };
+
+    for name in &env_candidates {
+        if let Ok(v) = std::env::var(name) {
+            if !v.trim().is_empty() {
+                return Some(v);
+            }
+        }
+    }
+
+    if provider.is_empty() {
+        return None;
+    }
+    let generic_name = format!("{}_API_KEY", provider.to_uppercase());
+    std::env::var(generic_name).ok().filter(|v| !v.trim().is_empty())
+}
+
+/// Key source for provider selector labels.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProviderKeySource {
+    Env,
+    Keyring,
+}
+
+#[cfg(not(test))]
+fn profile_provider_key_source(profile: &str, provider: &str) -> Option<ProviderKeySource> {
+    if get_key_for_provider_from_env(provider).is_some() {
+        return Some(ProviderKeySource::Env);
+    }
+    let scoped_provider = format!("{}:{}", profile, provider);
+    if let Ok(key) = get_api_key_helper(&scoped_provider) {
+        if !key.trim().is_empty() {
+            return Some(ProviderKeySource::Keyring);
+        }
+    }
+    if let Ok(key) = get_api_key_helper(provider) {
+        if !key.trim().is_empty() {
+            return Some(ProviderKeySource::Keyring);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+fn profile_provider_key_source(_profile: &str, _provider: &str) -> Option<ProviderKeySource> {
+    None
+}
+
+/// Resolves API key for (profile, provider) from env then keyring. Used so rai run can use a provider with existing credentials.
+fn get_key_for_provider(profile: &str, provider: &str) -> Option<String> {
+    if let Some(key) = get_key_for_provider_from_env(provider) {
+        return Some(key);
+    }
+    #[cfg(not(test))]
+    {
+        let scoped = format!("{}:{}", profile, provider);
+        if let Ok(key) = get_api_key_helper(&scoped) {
+            if !key.trim().is_empty() {
+                return Some(key);
+            }
+        }
+        if let Ok(key) = get_api_key_helper(provider) {
+            if !key.trim().is_empty() {
+                return Some(key);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(test))]
+fn profile_provider_has_saved_key(profile: &str, provider: &str) -> bool {
+    profile_provider_key_source(profile, provider).is_some()
+}
+
+#[cfg(test)]
+fn profile_provider_has_saved_key(_profile: &str, _provider: &str) -> bool {
+    false
 }
 
 fn available_providers() -> Vec<&'static str> {
     vec!["poe", "openai", "anthropic", "google", "xai"]
 }
 
-fn configure_provider_and_key(config: &mut Config) -> anyhow::Result<()> {
+fn configure_provider_and_key(config: &mut Config, require_key: bool) -> anyhow::Result<()> {
     print_section("Provider");
     let providers = available_providers();
     let default_idx = providers
         .iter()
         .position(|provider| *provider == config.provider)
         .unwrap_or(0);
+    let provider_labels: Vec<String> = providers
+        .iter()
+        .map(|provider| {
+            match profile_provider_key_source(&config.profile, provider) {
+                Some(ProviderKeySource::Env) => format!("{} [read from env]", provider),
+                Some(ProviderKeySource::Keyring) => format!("{} [configured]", provider),
+                None => format!("{} [not configured]", provider),
+            }
+        })
+        .collect();
+    println!(
+        "Hint: [read from env] = key from POE_API_KEY etc.; [configured] = key in OS keyring."
+    );
     let selection = Select::new()
         .with_prompt("Select provider")
-        .items(&providers)
+        .items(&provider_labels)
         .default(default_idx)
         .interact_opt()?;
     let provider = match selection {
@@ -1293,12 +1419,34 @@ fn configure_provider_and_key(config: &mut Config) -> anyhow::Result<()> {
     config.providers = vec![provider.clone()];
     config.default_provider = Some(provider.clone());
 
-    let api_key: String = Input::new()
-        .with_prompt("API key (leave empty to keep current)")
-        .allow_empty(true)
-        .interact_text()?;
-    if !api_key.trim().is_empty() {
-        set_profile_api_key(&config.profile, &provider, &api_key)?;
+    let has_saved_key = profile_provider_has_saved_key(&config.profile, &provider);
+    println!(
+        "Security: API keys are stored in your OS keyring (secure encrypted credential store), not in plain-text config files."
+    );
+    loop {
+        let key_prompt = if has_saved_key || !require_key {
+            "API key (leave empty to keep current keyring value)"
+        } else {
+            "API key (required for setup)"
+        };
+        let api_key: String = Input::new()
+            .with_prompt(key_prompt)
+            .allow_empty(true)
+            .interact_text()?;
+        if !api_key.trim().is_empty() {
+            set_profile_api_key(&config.profile, &provider, &api_key)?;
+            println!(
+                "Saved API key for provider '{}' in OS keyring (profile '{}').",
+                provider, config.profile
+            );
+            break;
+        }
+        if has_saved_key || !require_key {
+            break;
+        }
+        println!(
+            "An API key is required to finish `rai start`. Enter one now or press Ctrl+C to cancel setup."
+        );
     }
     Ok(())
 }
@@ -1482,6 +1630,11 @@ fn handle_config(profile_override: Option<&str>) -> anyhow::Result<()> {
     }
 
     let mut config = Config::load(profile_override)?;
+    let autosave = |config: &Config| -> anyhow::Result<()> {
+        config.save()?;
+        Config::set_active_profile(&config.profile)?;
+        Ok(())
+    };
     loop {
         print_section("Configuration");
         let options = vec![
@@ -1489,8 +1642,7 @@ fn handle_config(profile_override: Option<&str>) -> anyhow::Result<()> {
             "Model defaults",
             "Tools",
             "Profiles",
-            "Save and exit",
-            "Exit without saving",
+            "Exit config",
         ];
         let selection = Select::new()
             .with_prompt(format!("Editing profile: {}", config.profile))
@@ -1499,18 +1651,28 @@ fn handle_config(profile_override: Option<&str>) -> anyhow::Result<()> {
             .interact_opt()?;
 
         match selection {
-            Some(0) => configure_provider_and_key(&mut config)?,
-            Some(1) => configure_model_defaults(&mut config)?,
-            Some(2) => configure_tools(&mut config)?,
-            Some(3) => configure_profiles_menu(&mut config)?,
+            Some(0) => {
+                configure_provider_and_key(&mut config, false)?;
+                autosave(&config)?;
+            }
+            Some(1) => {
+                configure_model_defaults(&mut config)?;
+                autosave(&config)?;
+            }
+            Some(2) => {
+                configure_tools(&mut config)?;
+                autosave(&config)?;
+            }
+            Some(3) => {
+                configure_profiles_menu(&mut config)?;
+                autosave(&config)?;
+            }
             Some(4) => {
-                config.save()?;
-                Config::set_active_profile(&config.profile)?;
-                println!("Configuration saved.");
+                println!("Exited config.");
                 return Ok(());
             }
-            Some(5) | None => {
-                println!("Exited without saving.");
+            None => {
+                println!("Exited config.");
                 return Ok(());
             }
             _ => {}
@@ -1535,7 +1697,7 @@ fn handle_start(profile_override: Option<&str>) -> anyhow::Result<()> {
     print_section("Welcome to rai start");
     println!("We'll do a quick setup: provider, API key, and model.");
 
-    configure_provider_and_key(&mut config)?;
+    configure_provider_and_key(&mut config, true)?;
     configure_model_defaults(&mut config)?;
     config.save()?;
     Config::set_active_profile(&config.profile)?;
@@ -1543,7 +1705,7 @@ fn handle_start(profile_override: Option<&str>) -> anyhow::Result<()> {
     println!("\nSaved profile '{}'.", config.profile);
     println!("Try: rai run \"Hello world\"");
 
-    let choices = vec!["Continue", "More settings"];
+    let choices = vec!["Finish", "More settings"];
     let selection = Select::new()
         .with_prompt("Next step")
         .items(&choices)
@@ -1854,6 +2016,9 @@ async fn dispatch_keyword_task_as_command(cli: &Cli, task_keyword: &str) -> anyh
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load .env from current directory so POE_API_KEY etc. are available
+    let _ = dotenvy::dotenv();
+
     let cli = Cli::parse();
 
     let log_level = match cli.verbose {

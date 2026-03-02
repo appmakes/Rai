@@ -31,8 +31,8 @@ rai config
 ```
 
 Profile settings are stored per file:
-- `~/.config/rai/config.toml` (global default/active profile)
-- `~/.config/rai/config.<profile>.toml` (profile settings)
+- `~/.config/rai/config.toml` (global settings + default profile settings)
+- `~/.config/rai/config.<profile>.toml` (non-default profile settings)
 
 Example:
 
@@ -40,10 +40,6 @@ Example:
 # ~/.config/rai/config.toml
 default_profile = "default"
 active_profile = "default"
-```
-
-```toml
-# ~/.config/rai/config.default.toml
 providers = ["poe", "openai"]
 default_provider = "poe"
 default_model = "gpt-4o"
@@ -61,9 +57,6 @@ Provider selection rules:
 
 Rai supports setting API keys via environment variables for automation or to piggyback on existing CLI tools.
 
-### Global Override
-- `RAI_API_KEY`: Overrides any provider-specific key.
-
 ### Provider-Specific Keys
 Rai automatically detects keys from standard environment variables used by other tools:
 
@@ -73,6 +66,10 @@ Rai automatically detects keys from standard environment variables used by other
 | **OpenAI** | `OPENAI_API_KEY` |
 | **Anthropic** | `ANTHROPIC_API_KEY` |
 | **Google** | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+
+API key resolution order:
+1. System keyring (profile-scoped first, then provider-level fallback)
+2. Provider-specific environment variable(s)
 
 ## Model Selection
 

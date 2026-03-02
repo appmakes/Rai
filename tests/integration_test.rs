@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
@@ -22,14 +23,9 @@ fn integration_test_home() -> &'static PathBuf {
             .expect("failed to create integration-test config directory");
         fs::write(
             config_dir.join("config.toml"),
-            "default_profile = \"default\"\nactive_profile = \"default\"\n",
+            "default_profile = \"default\"\nactive_profile = \"default\"\nproviders = [\"poe\"]\ndefault_provider = \"poe\"\ndefault_model = \"gpt-4o\"\ntool_mode = \"ask\"\nno_tools = false\nauto_approve = false\n",
         )
         .expect("failed to write integration-test global config file");
-        fs::write(
-            config_dir.join("config.default.toml"),
-            "providers = [\"poe\"]\ndefault_provider = \"poe\"\ndefault_model = \"gpt-4o\"\ntool_mode = \"ask\"\nno_tools = false\nauto_approve = false\n",
-        )
-        .expect("failed to write integration-test config file");
 
         home
     })
@@ -40,6 +36,29 @@ fn rai_bin() -> Command {
     cmd.env("CI", "1");
     cmd.env("HOME", integration_test_home());
     cmd.env("XDG_CONFIG_HOME", integration_test_home().join(".config"));
+    cmd
+}
+
+fn fresh_home() -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!(
+        "rai-integration-home-fresh-{}-{}",
+        std::process::id(),
+        nonce
+    ));
+    fs::create_dir_all(home.join(".config").join("rai"))
+        .expect("failed to create fresh integration-test config directory");
+    home
+}
+
+fn rai_bin_with_home(home: &Path) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_rai"));
+    cmd.env("CI", "1");
+    cmd.env("HOME", home);
+    cmd.env("XDG_CONFIG_HOME", home.join(".config"));
     cmd
 }
 
@@ -79,7 +98,7 @@ fn test_run_help() {
 fn test_global_bill_before_run_executes_run_semantics() {
     let output = rai_bin()
         .args(["--bill", "run", "demo/task.md"])
-        .env("RAI_API_KEY", "test-dummy")
+        .env("POE_API_KEY", "test-dummy")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -133,7 +152,6 @@ fn test_create_rejects_ci() {
 fn test_run_adhoc_no_api_key() {
     let output = rai_bin()
         .args(["run", "Hello world"])
-        .env_remove("RAI_API_KEY")
         .env_remove("POE_API_KEY")
         .env_remove("OPENAI_API_KEY")
         .output()
@@ -151,7 +169,6 @@ fn test_run_adhoc_no_api_key() {
 fn test_run_weather_prompt_no_shortcut_without_api_key() {
     let output = rai_bin()
         .args(["run", "weather in Shanghai"])
-        .env_remove("RAI_API_KEY")
         .env_remove("POE_API_KEY")
         .env_remove("OPENAI_API_KEY")
         .output()
@@ -169,7 +186,6 @@ fn test_run_weather_prompt_no_shortcut_without_api_key() {
 fn test_run_whois_prompt_no_shortcut_without_api_key() {
     let output = rai_bin()
         .args(["run", "whois google.com"])
-        .env_remove("RAI_API_KEY")
         .env_remove("POE_API_KEY")
         .env_remove("OPENAI_API_KEY")
         .output()
@@ -187,7 +203,6 @@ fn test_run_whois_prompt_no_shortcut_without_api_key() {
 fn test_bill_flag_reports_zero_usage_when_no_api_call_is_made() {
     let output = rai_bin()
         .args(["run", "Hello world", "--bill"])
-        .env_remove("RAI_API_KEY")
         .env_remove("POE_API_KEY")
         .env_remove("OPENAI_API_KEY")
         .output()
@@ -205,7 +220,7 @@ fn test_bill_flag_reports_zero_usage_when_no_api_call_is_made() {
 fn test_run_adhoc_reaches_provider() {
     let output = rai_bin()
         .args(["run", "Hello"])
-        .env("RAI_API_KEY", "test-dummy")
+        .env("POE_API_KEY", "test-dummy")
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -221,7 +236,7 @@ fn test_run_adhoc_reaches_provider() {
 fn test_run_task_file_missing_args_ci() {
     let output = rai_bin()
         .args(["run", "demo/task.md"])
-        .env("RAI_API_KEY", "test")
+        .env("POE_API_KEY", "test")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -233,7 +248,7 @@ fn test_run_task_file_missing_args_ci() {
 fn test_run_task_file_missing_subtask() {
     let output = rai_bin()
         .args(["run", "demo/task.md", "--subtask", "nonexistent", "arg1"])
-        .env("RAI_API_KEY", "test")
+        .env("POE_API_KEY", "test")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -247,7 +262,7 @@ fn test_run_task_file_missing_subtask() {
 fn test_run_hash_subtask_shorthand() {
     let output = rai_bin()
         .args(["run", "demo/task.md", "#security", "src/main.rs"])
-        .env("RAI_API_KEY", "test-dummy")
+        .env("POE_API_KEY", "test-dummy")
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -262,7 +277,7 @@ fn test_run_hash_subtask_shorthand() {
 fn test_run_hash_subtask_nonexistent() {
     let output = rai_bin()
         .args(["run", "demo/task.md", "#nonexistent", "arg1"])
-        .env("RAI_API_KEY", "test")
+        .env("POE_API_KEY", "test")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -280,7 +295,7 @@ fn test_run_hash_subtask_nonexistent() {
 fn test_implicit_run_adhoc() {
     let output = rai_bin()
         .args(["Hello from implicit"])
-        .env("RAI_API_KEY", "test-dummy")
+        .env("POE_API_KEY", "test-dummy")
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -295,7 +310,7 @@ fn test_implicit_run_adhoc() {
 fn test_implicit_run_with_task_file_and_args() {
     let output = rai_bin()
         .args(["demo/task.md", "src/main.rs"])
-        .env("RAI_API_KEY", "test-dummy")
+        .env("POE_API_KEY", "test-dummy")
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -310,7 +325,7 @@ fn test_implicit_run_with_task_file_and_args() {
 fn test_implicit_run_with_hash_subtask() {
     let output = rai_bin()
         .args(["demo/task.md", "#security", "src/main.rs"])
-        .env("RAI_API_KEY", "test-dummy")
+        .env("POE_API_KEY", "test-dummy")
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -325,7 +340,7 @@ fn test_implicit_run_with_hash_subtask() {
 fn test_implicit_task_file_missing_args_ci() {
     let output = rai_bin()
         .args(["demo/task.md"])
-        .env("RAI_API_KEY", "test")
+        .env("POE_API_KEY", "test")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -485,6 +500,32 @@ fn test_profile_list() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("default"));
+}
+
+#[test]
+fn test_profile_show_bootstraps_missing_default_profile() {
+    let home = fresh_home();
+    let config_dir = home.join(".config").join("rai");
+    fs::write(
+        config_dir.join("config.toml"),
+        "default_profile = \"default\"\nactive_profile = \"default\"\n",
+    )
+    .expect("failed to write global config");
+
+    let output = rai_bin_with_home(&home)
+        .args(["profile", "show"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Profile: default"), "stdout: {}", stdout);
+    let config_content = fs::read_to_string(config_dir.join("config.toml"))
+        .expect("config.toml should exist after profile bootstrap");
+    assert!(
+        config_content.contains("providers = [\"poe\"]"),
+        "default profile should be stored in config.toml"
+    );
 }
 
 #[test]

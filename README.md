@@ -18,7 +18,7 @@
 
 After building, run the binary from:
 
-- `cargo run -- -help`
+- `cargo run -- --help`
 - `target/debug/rai` (debug)
 - `target/release/rai` (release)
 
@@ -54,10 +54,10 @@ Flags (global unless noted):
 ## Configuration notes
 
 - Global config: `~/.config/rai/config.toml`
-- Profile config: `~/.config/rai/config.<profile>.toml`
+- Default profile config: `~/.config/rai/config.toml`
+- Non-default profile config: `~/.config/rai/config.<profile>.toml`
 - If no profile is explicitly selected, `rai` falls back to `default` and auto-creates it when missing
 - Supported provider today: `poe`
 - API key lookup order:
-  1. `RAI_API_KEY`
-  2. provider env var (for example `POE_API_KEY`)
-  3. OS keyring
+  1. OS keyring (recommended)
+  2. provider env var (e.g. `POE_API_KEY`); a `.env` file in the current directory is loaded automatically

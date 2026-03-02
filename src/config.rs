@@ -141,6 +141,75 @@ struct ProfileConfigFile {
     auto_approve: bool,
 }
 
+impl ProfileConfigFile {
+    fn has_meaningful_fields(&self) -> bool {
+        !self.provider.trim().is_empty()
+            || !self.providers.is_empty()
+            || self.default_provider.is_some()
+            || !self.default_model.trim().is_empty()
+            || !self.tool_mode.trim().is_empty()
+            || self.no_tools
+            || self.auto_approve
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct CombinedConfigFile {
+    #[serde(default = "default_profile_name")]
+    default_profile: String,
+    #[serde(default)]
+    active_profile: Option<String>,
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    providers: Vec<String>,
+    #[serde(default)]
+    default_provider: Option<String>,
+    #[serde(default)]
+    default_model: String,
+    #[serde(default)]
+    tool_mode: String,
+    #[serde(default)]
+    no_tools: bool,
+    #[serde(default)]
+    auto_approve: bool,
+}
+
+impl CombinedConfigFile {
+    fn from_parts(global: &GlobalConfigFile, profile: &ProfileConfigFile) -> Self {
+        Self {
+            default_profile: global.default_profile.clone(),
+            active_profile: global.active_profile.clone(),
+            provider: profile.provider.clone(),
+            providers: profile.providers.clone(),
+            default_provider: profile.default_provider.clone(),
+            default_model: profile.default_model.clone(),
+            tool_mode: profile.tool_mode.clone(),
+            no_tools: profile.no_tools,
+            auto_approve: profile.auto_approve,
+        }
+    }
+
+    fn to_global(&self) -> GlobalConfigFile {
+        GlobalConfigFile {
+            default_profile: self.default_profile.clone(),
+            active_profile: self.active_profile.clone(),
+        }
+    }
+
+    fn to_profile(&self) -> ProfileConfigFile {
+        ProfileConfigFile {
+            provider: self.provider.clone(),
+            providers: self.providers.clone(),
+            default_provider: self.default_provider.clone(),
+            default_model: self.default_model.clone(),
+            tool_mode: self.tool_mode.clone(),
+            no_tools: self.no_tools,
+            auto_approve: self.auto_approve,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct LegacyConfigFile {
     #[serde(default)]
@@ -192,17 +261,27 @@ impl Config {
         let mut global = Self::load_global_config(&config_dir)?;
         Self::migrate_legacy_if_needed(&config_dir, &mut global)?;
 
-        let requested_profile = if let Some(profile) = profile_override {
-            validate_profile_name(profile)?
+        let (mut requested_profile, explicit_profile_selection) = if let Some(profile) = profile_override
+        {
+            (validate_profile_name(profile)?, true)
         } else if let Ok(profile) = env::var("RAI_PROFILE") {
             if profile.trim().is_empty() {
-                Self::resolve_profile_from_global(&global)?
+                (Self::resolve_profile_from_global(&global)?, false)
             } else {
-                validate_profile_name(&profile)?
+                (validate_profile_name(&profile)?, true)
             }
         } else {
-            Self::resolve_profile_from_global(&global)?
+            (Self::resolve_profile_from_global(&global)?, false)
         };
+
+        if !explicit_profile_selection && !Self::profile_exists(&requested_profile)? {
+            requested_profile = DEFAULT_PROFILE_NAME.to_string();
+            Self::ensure_default_profile_exists(&config_dir, &mut global)?;
+            if global.active_profile.as_deref() != Some(DEFAULT_PROFILE_NAME) {
+                global.active_profile = Some(DEFAULT_PROFILE_NAME.to_string());
+                Self::save_global_config(&config_dir, &global)?;
+            }
+        }
 
         let profile_file = Self::load_profile_config(&config_dir, &requested_profile)?;
         Ok(Self::from_profile_file(requested_profile, profile_file))
@@ -239,6 +318,11 @@ impl Config {
                 names.push(name);
             }
         }
+        if Self::profile_exists(DEFAULT_PROFILE_NAME)?
+            && !names.iter().any(|name| name == DEFAULT_PROFILE_NAME)
+        {
+            names.push(DEFAULT_PROFILE_NAME.to_string());
+        }
         names.sort();
         Ok(names)
     }
@@ -246,15 +330,24 @@ impl Config {
     pub fn profile_exists(profile: &str) -> Result<bool> {
         let profile = validate_profile_name(profile)?;
         let config_dir = Self::get_config_dir()?;
-        Ok(Self::profile_config_path(&config_dir, &profile).exists())
+        let path = Self::profile_config_path(&config_dir, &profile);
+        if !path.exists() {
+            return Ok(false);
+        }
+        if profile == DEFAULT_PROFILE_NAME {
+            let content = fs::read_to_string(path).context("Failed to read profile config file")?;
+            let combined: CombinedConfigFile =
+                toml::from_str(&content).context("Failed to parse profile config file")?;
+            return Ok(combined.to_profile().has_meaningful_fields());
+        }
+        Ok(true)
     }
 
     pub fn create_profile(name: &str, copy_from: Option<&str>) -> Result<()> {
         let profile_name = validate_profile_name(name)?;
         let config_dir = Self::get_config_dir()?;
         fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
-        let profile_path = Self::profile_config_path(&config_dir, &profile_name);
-        if profile_path.exists() {
+        if Self::profile_exists(&profile_name)? {
             bail!("Profile '{}' already exists.", profile_name);
         }
 
@@ -262,15 +355,7 @@ impl Config {
             let source_name = validate_profile_name(source)?;
             Self::load_profile_config(&config_dir, &source_name)?
         } else {
-            ProfileConfigFile {
-                providers: vec!["poe".to_string()],
-                default_provider: Some("poe".to_string()),
-                default_model: DEFAULT_MODEL_NAME.to_string(),
-                tool_mode: DEFAULT_TOOL_MODE.to_string(),
-                no_tools: false,
-                auto_approve: false,
-                provider: "poe".to_string(),
-            }
+            Self::default_profile_config()
         };
         Self::save_profile_config(&config_dir, &profile_name, &source_profile)?;
 
@@ -426,6 +511,41 @@ impl Config {
         validate_profile_name(&global.default_profile)
     }
 
+    fn default_profile_config() -> ProfileConfigFile {
+        ProfileConfigFile {
+            providers: vec!["poe".to_string()],
+            default_provider: Some("poe".to_string()),
+            default_model: DEFAULT_MODEL_NAME.to_string(),
+            tool_mode: DEFAULT_TOOL_MODE.to_string(),
+            no_tools: false,
+            auto_approve: false,
+            provider: "poe".to_string(),
+        }
+    }
+
+    fn ensure_default_profile_exists(config_dir: &Path, global: &mut GlobalConfigFile) -> Result<()> {
+        let default_profile_path = Self::profile_config_path(config_dir, DEFAULT_PROFILE_NAME);
+        if !default_profile_path.exists() || !Self::profile_exists(DEFAULT_PROFILE_NAME)? {
+            let data = Self::default_profile_config();
+            Self::save_profile_config(config_dir, DEFAULT_PROFILE_NAME, &data)?;
+        }
+
+        let mut changed = false;
+        if global.default_profile.trim().is_empty() {
+            global.default_profile = DEFAULT_PROFILE_NAME.to_string();
+            changed = true;
+        }
+        if global.active_profile.is_none() {
+            global.active_profile = Some(DEFAULT_PROFILE_NAME.to_string());
+            changed = true;
+        }
+        if changed {
+            Self::save_global_config(config_dir, global)?;
+        }
+
+        Ok(())
+    }
+
     fn migrate_legacy_if_needed(config_dir: &Path, global: &mut GlobalConfigFile) -> Result<()> {
         let default_profile_path = Self::profile_config_path(config_dir, DEFAULT_PROFILE_NAME);
         if default_profile_path.exists() {
@@ -473,15 +593,24 @@ impl Config {
             return Ok(GlobalConfigFile::default());
         }
         let content = fs::read_to_string(path).context("Failed to read global config file")?;
-        let global: GlobalConfigFile =
+        let combined: CombinedConfigFile =
             toml::from_str(&content).context("Failed to parse global config file")?;
-        Ok(global)
+        Ok(combined.to_global())
     }
 
     fn save_global_config(config_dir: &Path, global: &GlobalConfigFile) -> Result<()> {
         let path = Self::global_config_path(config_dir);
+        let existing_profile = if path.exists() {
+            let content = fs::read_to_string(&path).context("Failed to read global config file")?;
+            toml::from_str::<CombinedConfigFile>(&content)
+                .context("Failed to parse global config file")?
+                .to_profile()
+        } else {
+            ProfileConfigFile::default()
+        };
+        let combined = CombinedConfigFile::from_parts(global, &existing_profile);
         let content =
-            toml::to_string_pretty(global).context("Failed to serialize global config file")?;
+            toml::to_string_pretty(&combined).context("Failed to serialize global config file")?;
         fs::write(path, content).context("Failed to write global config file")
     }
 
@@ -496,9 +625,20 @@ impl Config {
             );
         }
         let content = fs::read_to_string(path).context("Failed to read profile config file")?;
-        let profile: ProfileConfigFile =
+        if profile == DEFAULT_PROFILE_NAME {
+            let combined: CombinedConfigFile =
+                toml::from_str(&content).context("Failed to parse profile config file")?;
+            let profile_file = combined.to_profile();
+            if profile_file.has_meaningful_fields() {
+                return Ok(profile_file);
+            }
+            let defaults = Self::default_profile_config();
+            Self::save_profile_config(config_dir, DEFAULT_PROFILE_NAME, &defaults)?;
+            return Ok(defaults);
+        }
+        let profile_file: ProfileConfigFile =
             toml::from_str(&content).context("Failed to parse profile config file")?;
-        Ok(profile)
+        Ok(profile_file)
     }
 
     fn save_profile_config(
@@ -508,6 +648,21 @@ impl Config {
     ) -> Result<()> {
         let profile = validate_profile_name(profile)?;
         let path = Self::profile_config_path(config_dir, &profile);
+        if profile == DEFAULT_PROFILE_NAME {
+            let global = if path.exists() {
+                let content =
+                    fs::read_to_string(&path).context("Failed to read global config file")?;
+                toml::from_str::<CombinedConfigFile>(&content)
+                    .context("Failed to parse global config file")?
+                    .to_global()
+            } else {
+                GlobalConfigFile::default()
+            };
+            let combined = CombinedConfigFile::from_parts(&global, data);
+            let content = toml::to_string_pretty(&combined)
+                .context("Failed to serialize profile config file")?;
+            return fs::write(path, content).context("Failed to write profile config file");
+        }
         let content =
             toml::to_string_pretty(data).context("Failed to serialize profile config file")?;
         fs::write(path, content).context("Failed to write profile config file")
@@ -518,6 +673,9 @@ impl Config {
     }
 
     fn profile_config_path(config_dir: &Path, profile: &str) -> PathBuf {
+        if profile == DEFAULT_PROFILE_NAME {
+            return Self::global_config_path(config_dir);
+        }
         config_dir.join(format!("config.{}.toml", profile))
     }
 
@@ -527,19 +685,28 @@ impl Config {
         Ok(proj_dirs.config_dir().to_path_buf())
     }
 
-    // Helper to resolve API key from Env -> Keyring
+    // Helper to resolve API key from Keyring -> Provider Env
     pub fn resolve_api_key(&mut self) -> Result<()> {
-        // 1. Check RAI_API_KEY (Global override)
-        if let Ok(key) = env::var("RAI_API_KEY") {
-            self.api_key = key;
-            return Ok(());
-        }
-
         if self.provider.trim().is_empty() {
             return Ok(());
         }
 
-        // 2. Check Provider Specific Standard Env Vars
+        // 1. Check Keyring first (profile-scoped then legacy provider scope).
+        #[cfg(not(test))]
+        {
+            let profile_scoped = format!("{}:{}", self.profile, self.provider);
+            if let Ok(key) = crate::get_api_key_helper(&profile_scoped) {
+                self.api_key = key;
+                return Ok(());
+            }
+
+            if let Ok(key) = crate::get_api_key_helper(&self.provider) {
+                self.api_key = key;
+                return Ok(());
+            }
+        }
+
+        // 2. Check provider-specific env vars (automation fallback).
         let provider_key = self.provider.to_lowercase();
         let env_candidates = match provider_key.as_str() {
             "openai" => vec!["OPENAI_API_KEY"],
@@ -562,21 +729,6 @@ impl Config {
         let provider_env = format!("{}_API_KEY", self.provider.to_uppercase());
         if let Ok(key) = env::var(&provider_env) {
             if !key.is_empty() {
-                self.api_key = key;
-                return Ok(());
-            }
-        }
-
-        // 4. Check Keyring (profile-scoped then legacy provider scope)
-        #[cfg(not(test))]
-        {
-            let profile_scoped = format!("{}:{}", self.profile, self.provider);
-            if let Ok(key) = crate::get_api_key_helper(&profile_scoped) {
-                self.api_key = key;
-                return Ok(());
-            }
-
-            if let Ok(key) = crate::get_api_key_helper(&self.provider) {
                 self.api_key = key;
                 return Ok(());
             }
