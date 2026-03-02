@@ -2,6 +2,12 @@ use anyhow::Result;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArgSpec {
+    pub name: String,
+    pub required: bool,
+}
+
 pub fn find_variables(template: &str) -> Vec<String> {
     let re = Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*|\d+)\s*\}\}").unwrap();
     let mut seen = HashSet::new();
@@ -31,13 +37,77 @@ pub fn render(template: &str, variables: &HashMap<String, String>) -> Result<Str
     });
 
     if !missing.is_empty() {
-        anyhow::bail!(
-            "Missing template variable(s): {}",
-            missing.join(", ")
-        );
+        anyhow::bail!("Missing template variable(s): {}", missing.join(", "));
     }
 
     Ok(result.to_string())
+}
+
+pub fn parse_arg_spec(raw: &str) -> Result<ArgSpec> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("Invalid empty argument declaration in task frontmatter.");
+    }
+
+    let (candidate_name, required) = if let Some(without_optional) = trimmed.strip_suffix('?') {
+        (without_optional.trim(), false)
+    } else {
+        (trimmed, true)
+    };
+
+    if candidate_name.is_empty() {
+        anyhow::bail!(
+            "Invalid argument declaration '{}'. Use <name> for required or <name>? for optional.",
+            raw
+        );
+    }
+
+    let valid_name = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$|^\d+$").unwrap();
+    if !valid_name.is_match(candidate_name) {
+        anyhow::bail!(
+            "Invalid argument declaration '{}'. Names must match [a-zA-Z_][a-zA-Z0-9_]* or numeric index.",
+            raw
+        );
+    }
+
+    Ok(ArgSpec {
+        name: candidate_name.to_string(),
+        required,
+    })
+}
+
+pub fn collect_all_arg_specs(
+    global_args: &[String],
+    section_args: &[String],
+) -> Result<Vec<ArgSpec>> {
+    let mut merged: Vec<ArgSpec> = Vec::new();
+    let mut positions: HashMap<String, usize> = HashMap::new();
+
+    for raw in global_args.iter().chain(section_args.iter()) {
+        let parsed = parse_arg_spec(raw)?;
+        if let Some(existing_index) = positions.get(&parsed.name).copied() {
+            if parsed.required {
+                merged[existing_index].required = true;
+            }
+        } else {
+            positions.insert(parsed.name.clone(), merged.len());
+            merged.push(parsed);
+        }
+    }
+
+    Ok(merged)
+}
+
+pub fn arg_names(arg_specs: &[ArgSpec]) -> Vec<String> {
+    arg_specs.iter().map(|spec| spec.name.clone()).collect()
+}
+
+pub fn required_arg_names(arg_specs: &[ArgSpec]) -> Vec<String> {
+    arg_specs
+        .iter()
+        .filter(|spec| spec.required)
+        .map(|spec| spec.name.clone())
+        .collect()
 }
 
 pub fn map_args_to_variables(
@@ -57,19 +127,6 @@ pub fn map_args_to_variables(
     }
 
     Ok(variables)
-}
-
-pub fn collect_all_args(
-    global_args: &[String],
-    section_args: &[String],
-) -> Vec<String> {
-    let mut all = global_args.to_vec();
-    for arg in section_args {
-        if !all.contains(arg) {
-            all.push(arg.clone());
-        }
-    }
-    all
 }
 
 #[cfg(test)]
@@ -130,10 +187,83 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_all_args() {
-        let global = vec!["filename".to_string()];
-        let section = vec!["risk_level".to_string(), "filename".to_string()];
-        let all = collect_all_args(&global, &section);
-        assert_eq!(all, vec!["filename", "risk_level"]);
+    fn test_parse_arg_spec_required() {
+        let spec = parse_arg_spec("input_file").expect("required arg spec");
+        assert_eq!(
+            spec,
+            ArgSpec {
+                name: "input_file".to_string(),
+                required: true
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_arg_spec_optional() {
+        let spec = parse_arg_spec("output_format?").expect("optional arg spec");
+        assert_eq!(
+            spec,
+            ArgSpec {
+                name: "output_format".to_string(),
+                required: false
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_arg_spec_rejects_invalid_name() {
+        let error = parse_arg_spec("input-format").unwrap_err();
+        assert!(
+            error.to_string().contains("Invalid argument declaration"),
+            "error: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn test_collect_all_arg_specs_merges_optional_with_required() {
+        let global = vec!["input".to_string(), "output_format?".to_string()];
+        let section = vec!["output_format".to_string(), "input?".to_string()];
+        let specs = collect_all_arg_specs(&global, &section).expect("merged specs");
+        assert_eq!(
+            specs,
+            vec![
+                ArgSpec {
+                    name: "input".to_string(),
+                    required: true
+                },
+                ArgSpec {
+                    name: "output_format".to_string(),
+                    required: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_required_arg_names_returns_only_required_args() {
+        let specs = vec![
+            ArgSpec {
+                name: "input".to_string(),
+                required: true,
+            },
+            ArgSpec {
+                name: "output".to_string(),
+                required: true,
+            },
+            ArgSpec {
+                name: "input_format".to_string(),
+                required: false,
+            },
+        ];
+        assert_eq!(required_arg_names(&specs), vec!["input", "output"]);
+        assert_eq!(
+            arg_names(&specs),
+            vec![
+                "input".to_string(),
+                "output".to_string(),
+                "input_format".to_string()
+            ]
+        );
     }
 }
