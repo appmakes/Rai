@@ -22,6 +22,7 @@ Transform rai from a single-turn tool into a **multi-turn agent** that can:
 2. Send it to the AI with a set of **available tools**
 3. If the AI responds with a **tool call** → execute it → feed the result back
 4. Repeat until the AI produces a **final text response**
+5. If the AI returns terminal `fail` after tool usage but the failure looks recoverable (for example poor source quality), inject retry guidance and allow a bounded number of additional attempts
 
 ```
 User: "weather in shanghai"

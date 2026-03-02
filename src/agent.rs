@@ -8,6 +8,7 @@ use std::process::Command;
 use tracing::info;
 
 const DEFAULT_MAX_ITERATIONS: usize = 30;
+const DEFAULT_MAX_RECOVERABLE_FAIL_RETRIES: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssistantStatus {
@@ -21,6 +22,7 @@ enum AssistantStatus {
 pub struct AgentConfig {
     pub auto_approve: bool,
     pub max_iterations: usize,
+    pub max_recoverable_fail_retries: usize,
     pub blocked_patterns: Vec<String>,
     pub detail_enabled: bool,
     pub think_enabled: bool,
@@ -32,6 +34,7 @@ impl Default for AgentConfig {
         Self {
             auto_approve: false,
             max_iterations: DEFAULT_MAX_ITERATIONS,
+            max_recoverable_fail_retries: DEFAULT_MAX_RECOVERABLE_FAIL_RETRIES,
             blocked_patterns: Vec::new(),
             detail_enabled: false,
             think_enabled: false,
@@ -78,6 +81,8 @@ impl Agent {
             vec![Message::system(&system_prompt), Message::user(prompt)];
         let mut request_number: usize = 0;
         let mut pending_retry_after_failure = false;
+        let mut recoverable_fail_retries_used = 0usize;
+        let mut saw_any_tool_calls = false;
 
         for iteration in 0..self.config.max_iterations {
             info!(
@@ -103,6 +108,7 @@ impl Agent {
                     let status = parse_assistant_status(&text);
                     if is_success_status(status) {
                         pending_retry_after_failure = false;
+                        recoverable_fail_retries_used = 0;
                     }
                     if matches!(status, Some(AssistantStatus::FailedButNeedFurtherSteps)) {
                         if self.config.silent_enabled {
@@ -114,6 +120,22 @@ impl Agent {
 Continue executing additional steps/tools to fulfill the original request. \
 Do not stop yet.",
                         ));
+                        continue;
+                    }
+                    if matches!(status, Some(AssistantStatus::FailedAndEndTheLoop))
+                        && should_retry_after_failed_terminal_response(
+                            saw_any_tool_calls,
+                            recoverable_fail_retries_used,
+                            self.config.max_recoverable_fail_retries,
+                        )
+                    {
+                        pending_retry_after_failure = true;
+                        recoverable_fail_retries_used += 1;
+                        messages.push(Message::user(&build_retry_after_failed_terminal_response(
+                            &text,
+                            recoverable_fail_retries_used,
+                            self.config.max_recoverable_fail_retries,
+                        )));
                         continue;
                     }
                     if pending_retry_after_failure && status.is_none() {
@@ -130,6 +152,9 @@ Do not stop yet.",
                             request_number,
                             &format_tool_calls_for_detail(&tool_calls),
                         );
+                    }
+                    if !tool_calls.is_empty() {
+                        saw_any_tool_calls = true;
                     }
                     messages.push(Message::assistant_tool_calls(&tool_calls));
                     let mut failed_calls: Vec<(String, String)> = Vec::new();
@@ -159,6 +184,7 @@ Do not stop yet.",
                         )));
                     } else if success_count > 0 {
                         pending_retry_after_failure = false;
+                        recoverable_fail_retries_used = 0;
                     }
                 }
             }
@@ -459,6 +485,8 @@ Rules:
 - Prefer `web_search` for discovery and `web_fetch` for page content.
 - If unsure which tools are available, call `ls_tools` first.
 - If a shell command is unavailable (e.g., `whois` not found), do NOT stop; switch to `web_search`/`web_fetch` and continue.
+- If fetched web content is noisy/too long/not specific, do NOT fail immediately. Try another search result URL or a narrower `web_fetch` (for example lower `max_chars`) first.
+- Treat `state: "fail"` as terminal. Only use it after alternative attempts are exhausted.
 - Prefer the most specific tool (e.g., `file_read` over `shell cat`).
 - For shell commands: use simple, portable commands when possible.
 - Never run destructive commands (rm -rf, drop table, etc.).
@@ -587,6 +615,31 @@ fn build_retry_after_failed_text_response(text: &str) -> String {
 complete the request. Continue trying with alternative tools/sources.\nLast reply:\n{}",
         truncate_for_retry_note(text, 500)
     )
+}
+
+fn build_retry_after_failed_terminal_response(
+    text: &str,
+    retries_used: usize,
+    max_retries: usize,
+) -> String {
+    format!(
+        "[Retry required]\nYour last reply used `state: \"fail\"`, but this task may still be recoverable.\n\
+Try another tool/source strategy now (for web tasks: choose a different result URL or reduce `web_fetch.max_chars`). \
+Use `state: \"proceeding\"` while continuing.\n\
+Only return `state: \"fail\"` after alternative attempts are exhausted.\n\
+Retry budget: {}/{}.\nLast reply:\n{}",
+        retries_used,
+        max_retries,
+        truncate_for_retry_note(text, 500)
+    )
+}
+
+fn should_retry_after_failed_terminal_response(
+    saw_any_tool_calls: bool,
+    retries_used: usize,
+    max_retries: usize,
+) -> bool {
+    saw_any_tool_calls && max_retries > 0 && retries_used < max_retries
 }
 
 fn truncate_for_retry_note(input: &str, max_chars: usize) -> String {
@@ -783,6 +836,8 @@ mod tests {
         EventualSuccess,
         NeverRecovers,
         StatusDrivenRetry,
+        RecoverableFailThenSuccess,
+        RecoverableFailRetryBudgetExceeded,
     }
 
     struct MockProvider {
@@ -863,6 +918,37 @@ mod tests {
                     ),
                     _ => ProviderResponse::Text(
                         r#"{"state":"success","output":"Done.","description":"Completed."}"#
+                            .to_string(),
+                    ),
+                },
+                MockMode::RecoverableFailThenSuccess => match current_call {
+                    1 => ProviderResponse::ToolCalls(vec![ToolCall {
+                        id: "call-1".to_string(),
+                        name: "web_search".to_string(),
+                        arguments: json!({ "query": "weather shanghai current" }),
+                    }]),
+                    2 => ProviderResponse::Text(
+                        r#"{"state":"fail","output":"","description":"Unable to extract concise weather information from fetched content. The content was too detailed and not specific to the current weather."}"#
+                            .to_string(),
+                    ),
+                    3 => ProviderResponse::ToolCalls(vec![ToolCall {
+                        id: "call-2".to_string(),
+                        name: "web_search".to_string(),
+                        arguments: json!({ "query": "shanghai weather live now official source" }),
+                    }]),
+                    _ => ProviderResponse::Text(
+                        r#"{"state":"success","output":"Shanghai: 14°C, cloudy.","description":"Completed with alternate source."}"#
+                            .to_string(),
+                    ),
+                },
+                MockMode::RecoverableFailRetryBudgetExceeded => match current_call {
+                    1 => ProviderResponse::ToolCalls(vec![ToolCall {
+                        id: "call-1".to_string(),
+                        name: "web_search".to_string(),
+                        arguments: json!({ "query": "weather shanghai current" }),
+                    }]),
+                    _ => ProviderResponse::Text(
+                        r#"{"state":"fail","output":"","description":"Unable to extract concise weather information from fetched content. The content was too detailed and not specific to the current weather."}"#
                             .to_string(),
                     ),
                 },
@@ -1008,6 +1094,75 @@ mod tests {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         assert_eq!(calls, 2);
+    }
+
+    #[tokio::test]
+    async fn retries_when_model_returns_recoverable_failed_status_after_tool_usage() {
+        let (provider, call_count, snapshots) =
+            MockProvider::new(MockMode::RecoverableFailThenSuccess);
+        let mut agent = Agent::new(
+            Box::new(provider),
+            "mock-model".to_string(),
+            vec![Box::new(MockWebSearchTool)],
+            AgentConfig {
+                auto_approve: true,
+                max_iterations: 6,
+                max_recoverable_fail_retries: 2,
+                ..Default::default()
+            },
+        );
+
+        let output = agent
+            .run("weather in Shanghai")
+            .await
+            .expect("agent should retry recoverable fail and succeed");
+        assert!(output.contains(r#""state":"success""#));
+        let calls = *call_count
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        assert_eq!(calls, 4);
+
+        let recorded = snapshots
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let third_request_messages = &recorded[2];
+        let has_recoverable_fail_followup = third_request_messages.iter().any(|message| {
+            matches!(
+                message,
+                Message::User { content } if content.contains("Your last reply used `state: \"fail\"`")
+            )
+        });
+        assert!(
+            has_recoverable_fail_followup,
+            "agent should append recoverable-fail follow-up before retrying"
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_retrying_after_recoverable_fail_budget_is_exhausted() {
+        let (provider, call_count, _snapshots) =
+            MockProvider::new(MockMode::RecoverableFailRetryBudgetExceeded);
+        let mut agent = Agent::new(
+            Box::new(provider),
+            "mock-model".to_string(),
+            vec![Box::new(MockWebSearchTool)],
+            AgentConfig {
+                auto_approve: true,
+                max_iterations: 8,
+                max_recoverable_fail_retries: 2,
+                ..Default::default()
+            },
+        );
+
+        let output = agent
+            .run("weather in Shanghai")
+            .await
+            .expect("agent should return fail payload once retry budget is exhausted");
+        assert!(output.contains(r#""state":"fail""#));
+        let calls = *call_count
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        assert_eq!(calls, 4);
     }
 
     #[test]
