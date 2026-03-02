@@ -117,6 +117,7 @@ Rai uses an internal model status contract and shows a user-facing final state:
 - `fail`
 
 Failures (including inability responses) are treated as command failure and return a non-zero exit code.
+For recoverable tool-based failures after the model has already used tools (for example oversized/noisy fetched pages), Rai now prompts the model to retry with alternate sources before surfacing a final `fail`.
 
 By default, Rai keeps `run` output concise and prints the final answer in your terminal's default text color.
 
