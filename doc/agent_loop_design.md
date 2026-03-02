@@ -504,7 +504,7 @@ Prevent runaway agent loops:
 ```toml
 # ~/.config/rai/config.toml
 [agent]
-max_iterations = 10      # Max tool-call round-trips per session
+max_iterations = 30      # Max tool-call round-trips per session
 max_execution_time = 120  # Seconds before the loop is killed
 max_output_size = 65536   # Max bytes of tool output fed back to AI
 ```
