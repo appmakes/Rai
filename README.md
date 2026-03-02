@@ -18,6 +18,7 @@
 
 After building, run the binary from:
 
+- `cargo run -- -help`
 - `target/debug/rai` (debug)
 - `target/release/rai` (release)
 
@@ -28,9 +29,22 @@ Common commands:
 - `rai run task.md` — run a task file
 - `rai run task.md --input foo --output bar` — run task file with named task args
 - `rai plan task.md` — preview task structure before execution
+(optional: `--subtask name`, trailing args)
 - `rai create task.md` — create a task file interactively
 - `rai config` — open configuration menu
 - `rai profile list` — list profiles
+
+Flags (global unless noted):
+
+- `-v, --verbose` — debugging (repeat to increase level)
+- `-m, --model <MODEL>` — override AI model (e.g. `gpt-4o`, `kimi-k2`)
+- `--profile <NAME>` — select configuration profile
+- `-y, --yes` — auto-approve all tool calls
+- `--no-tools` — disable tool calling (single-turn only)
+- `-s, --silent` — do not ask for follow-up input
+- `--bill` — print API and token usage summary
+- `--detail` — show detailed runtime logs (tool calls, prompts, responses)
+- `--think` — ask provider to show thinking chain
 
 ## Test and lint
 
@@ -41,6 +55,7 @@ Common commands:
 
 - Global config: `~/.config/rai/config.toml`
 - Profile config: `~/.config/rai/config.<profile>.toml`
+- If no profile is explicitly selected, `rai` falls back to `default` and auto-creates it when missing
 - Supported provider today: `poe`
 - API key lookup order:
   1. `RAI_API_KEY`
