@@ -337,6 +337,73 @@ fn test_implicit_task_file_missing_args_ci() {
     );
 }
 
+#[test]
+fn test_implicit_task_file_named_flags_reach_provider() {
+    let output = rai_bin()
+        .args([
+            "demo/convert-format.md",
+            "--input",
+            "demo/source.md",
+            "--output",
+            "target/xxx.rtf",
+        ])
+        .env("RAI_API_KEY", "test-dummy")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("API") || stderr.contains("error"),
+        "Named flags should pass argument parsing and reach provider. stderr: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("Missing arguments"),
+        "Should not fail argument validation when required named args are provided. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_implicit_task_file_named_flags_missing_required_arg() {
+    let output = rai_bin()
+        .args(["demo/convert-format.md", "--input", "demo/source.md"])
+        .env("RAI_API_KEY", "test")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Missing arguments"),
+        "Expected missing argument error for required output flag. stderr: {}",
+        stderr
+    );
+    assert!(stderr.contains("output"), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_implicit_task_file_named_flags_unknown_argument() {
+    let output = rai_bin()
+        .args([
+            "demo/convert-format.md",
+            "--input",
+            "demo/source.md",
+            "--output",
+            "target/xxx.rtf",
+            "--destination",
+            "target/other.rtf",
+        ])
+        .env("RAI_API_KEY", "test")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown argument"),
+        "Expected unknown argument validation error. stderr: {}",
+        stderr
+    );
+}
+
 // --- Plan command tests ---
 
 #[test]

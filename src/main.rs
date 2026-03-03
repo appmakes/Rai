@@ -3,6 +3,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use config::Config;
 use dialoguer::{Confirm, Input, Select};
 use regex::Regex;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -254,6 +255,221 @@ fn compose_adhoc_prompt(task: &str, piped_stdin: Option<&str>) -> String {
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ParsedTaskCliArgs {
+    positional: Vec<String>,
+    named: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedTaskArguments {
+    variables: HashMap<String, String>,
+    arg_specs: Vec<template::ArgSpec>,
+}
+
+fn normalize_named_task_arg(name: &str) -> String {
+    name.trim().replace('-', "_")
+}
+
+fn parse_task_cli_args(raw_args: &[String]) -> anyhow::Result<ParsedTaskCliArgs> {
+    let mut parsed = ParsedTaskCliArgs::default();
+    let mut index = 0usize;
+
+    while index < raw_args.len() {
+        let token = &raw_args[index];
+        if token == "--" {
+            parsed
+                .positional
+                .extend(raw_args.iter().skip(index + 1).cloned());
+            break;
+        }
+
+        if let Some(body) = token.strip_prefix("--") {
+            if body.is_empty() {
+                anyhow::bail!("Invalid argument '--'.");
+            }
+
+            let (raw_name, raw_value) = if let Some((name, value)) = body.split_once('=') {
+                (name, Some(value.to_string()))
+            } else {
+                (body, None)
+            };
+
+            let normalized_name = normalize_named_task_arg(raw_name);
+            if normalized_name.is_empty() {
+                anyhow::bail!("Invalid named argument '{}'.", token);
+            }
+
+            let value = if let Some(value) = raw_value {
+                value
+            } else {
+                let Some(next_value) = raw_args.get(index + 1) else {
+                    anyhow::bail!("Missing value for argument '--{}'.", raw_name);
+                };
+                if next_value == "--" || next_value.starts_with("--") {
+                    anyhow::bail!("Missing value for argument '--{}'.", raw_name);
+                }
+                index += 1;
+                next_value.clone()
+            };
+
+            if parsed.named.contains_key(&normalized_name) {
+                anyhow::bail!("Duplicate named argument '--{}'.", raw_name);
+            }
+            parsed.named.insert(normalized_name, value);
+        } else {
+            parsed.positional.push(token.clone());
+        }
+        index += 1;
+    }
+
+    Ok(parsed)
+}
+
+fn build_effective_arg_specs(
+    global_args: &[String],
+    section_args: &[String],
+    vars_in_template: &[String],
+) -> anyhow::Result<Vec<template::ArgSpec>> {
+    let declared_specs = template::collect_all_arg_specs(global_args, section_args)?;
+    if declared_specs.is_empty() && !vars_in_template.is_empty() {
+        Ok(vars_in_template
+            .iter()
+            .map(|name| template::ArgSpec {
+                name: name.clone(),
+                required: true,
+            })
+            .collect())
+    } else {
+        Ok(declared_specs)
+    }
+}
+
+fn resolve_task_arguments(
+    global_args: &[String],
+    section_args: &[String],
+    template_content: &str,
+    raw_args: &[String],
+    interactive: bool,
+) -> anyhow::Result<ResolvedTaskArguments> {
+    let vars_in_template = template::find_variables(template_content);
+    let arg_specs = build_effective_arg_specs(global_args, section_args, &vars_in_template)?;
+    let allowed_names: HashSet<String> = arg_specs.iter().map(|spec| spec.name.clone()).collect();
+    let parsed_cli_args = parse_task_cli_args(raw_args)?;
+
+    if !parsed_cli_args.named.is_empty() {
+        let mut unknown: Vec<String> = parsed_cli_args
+            .named
+            .keys()
+            .filter(|name| !allowed_names.contains(*name))
+            .cloned()
+            .collect();
+        if !unknown.is_empty() {
+            unknown.sort();
+            let mut expected = template::arg_names(&arg_specs);
+            expected.sort();
+            anyhow::bail!(
+                "Unknown argument(s): {}. Available task arguments: {}",
+                unknown
+                    .iter()
+                    .map(|name| format!("--{}", name))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                if expected.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    expected
+                        .iter()
+                        .map(|name| format!("--{}", name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            );
+        }
+    }
+
+    let arg_names = template::arg_names(&arg_specs);
+    let mut variables = template::map_args_to_variables(&arg_names, &parsed_cli_args.positional)?;
+
+    for (name, value) in &parsed_cli_args.named {
+        variables.insert(name.clone(), value.clone());
+    }
+
+    // Keep numeric placeholders aligned with declared argument order.
+    for (index, arg_spec) in arg_specs.iter().enumerate() {
+        if let Some(value) = variables.get(&arg_spec.name).cloned() {
+            variables.insert((index + 1).to_string(), value);
+        }
+    }
+
+    // Optional declared arguments default to empty string when omitted.
+    for arg_spec in &arg_specs {
+        if !arg_spec.required && !variables.contains_key(&arg_spec.name) {
+            variables.insert(arg_spec.name.clone(), String::new());
+        }
+    }
+
+    let mut missing_required = template::required_arg_names(&arg_specs)
+        .into_iter()
+        .filter(|name| {
+            variables
+                .get(name)
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+
+    if !missing_required.is_empty() {
+        if interactive {
+            for name in missing_required.drain(..) {
+                let value: String = Input::new()
+                    .with_prompt(format!("Enter value for '{}'", name))
+                    .interact_text()?;
+                variables.insert(name, value);
+            }
+        } else {
+            missing_required.sort();
+            anyhow::bail!(
+                "Missing arguments. Required: {}. Provide values positionally or via named flags (e.g., {}).",
+                missing_required.join(", "),
+                missing_required
+                    .iter()
+                    .map(|name| format!("--{} <value>", name))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
+    }
+
+    let mut missing_template_vars = vars_in_template
+        .iter()
+        .filter(|name| !variables.contains_key(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if !missing_template_vars.is_empty() {
+        if interactive {
+            for name in missing_template_vars.drain(..) {
+                let value: String = Input::new()
+                    .with_prompt(format!("Enter value for '{}'", name))
+                    .interact_text()?;
+                variables.insert(name, value);
+            }
+        } else {
+            missing_template_vars.sort();
+            anyhow::bail!(
+                "Missing arguments. Expected values for: {}. Provide them positionally or with --name <value>.",
+                missing_template_vars.join(", ")
+            );
+        }
+    }
+
+    Ok(ResolvedTaskArguments {
+        variables,
+        arg_specs,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssistantStatus {
     Success,
@@ -392,44 +608,14 @@ async fn handle_run(
     let (prompt, model) = if is_file {
         let parsed = task_parser::parse_task_file(task_path)?;
         let section = parsed.get_section(subtask)?;
-
-        let declared_args =
-            template::collect_all_args(&parsed.global_frontmatter.args, &section.frontmatter.args);
-
-        let vars_in_template = template::find_variables(&section.content);
-
-        let effective_args = if declared_args.is_empty() && !vars_in_template.is_empty() {
-            vars_in_template.clone()
-        } else {
-            declared_args
-        };
-
-        let variables = {
-            if args.len() < vars_in_template.len() && !is_interactive() {
-                anyhow::bail!(
-                    "Missing arguments. Expected {} ({}) but got {}. \
-                     Provide all arguments in non-interactive mode.",
-                    vars_in_template.len(),
-                    vars_in_template.join(", "),
-                    args.len()
-                );
-            }
-
-            let mut mapped = template::map_args_to_variables(&effective_args, args)?;
-
-            if is_interactive() {
-                for var in &vars_in_template {
-                    if !mapped.contains_key(var) {
-                        let value: String = Input::new()
-                            .with_prompt(format!("Enter value for '{}'", var))
-                            .interact_text()?;
-                        mapped.insert(var.clone(), value);
-                    }
-                }
-            }
-
-            mapped
-        };
+        let resolved = resolve_task_arguments(
+            &parsed.global_frontmatter.args,
+            &section.frontmatter.args,
+            &section.content,
+            args,
+            is_interactive(),
+        )?;
+        let variables = resolved.variables;
 
         let rendered = template::render(&section.content, &variables)?;
 
@@ -1539,24 +1725,14 @@ async fn handle_plan(
     };
 
     let section = parsed.get_section(subtask_opt)?;
-    let all_args =
-        template::collect_all_args(&parsed.global_frontmatter.args, &section.frontmatter.args);
-    let vars = template::find_variables(&section.content);
-
-    let effective_args = if all_args.is_empty() && !vars.is_empty() {
-        vars.clone()
-    } else {
-        all_args
-    };
-
-    let mut mapped = template::map_args_to_variables(&effective_args, prefilled_args)?;
-
-    for var in &vars {
-        if !mapped.contains_key(var) {
-            let value: String = Input::new().with_prompt(var).interact_text()?;
-            mapped.insert(var.clone(), value);
-        }
-    }
+    let resolved = resolve_task_arguments(
+        &parsed.global_frontmatter.args,
+        &section.frontmatter.args,
+        &section.content,
+        prefilled_args,
+        true,
+    )?;
+    let mapped = resolved.variables;
 
     let rendered = template::render(&section.content, &mapped)?;
 
@@ -1576,10 +1752,15 @@ async fn handle_plan(
         return Ok(());
     }
 
-    let final_args: Vec<String> = effective_args
-        .iter()
-        .filter_map(|name| mapped.get(name).cloned())
-        .collect();
+    let mut final_args: Vec<String> = Vec::new();
+    for arg_spec in &resolved.arg_specs {
+        if let Some(value) = mapped.get(&arg_spec.name) {
+            if arg_spec.required || !value.is_empty() {
+                final_args.push(format!("--{}", arg_spec.name));
+                final_args.push(value.clone());
+            }
+        }
+    }
 
     handle_run(task_file, subtask_opt, &final_args, opts).await
 }
@@ -1768,9 +1949,10 @@ mod tests {
     use super::{
         apply_status_contract_prompt, apply_think_mode_prompt, compose_adhoc_prompt,
         derive_user_final_state, ensure_non_empty_piped_stdin, extract_thinking_blocks,
-        parse_assistant_payload, parse_assistant_status, parse_shorthand_args,
-        print_and_validate_response, response_has_failure_language, strip_internal_status_lines,
-        AssistantStatus, Cli, PipedStdin, ResponseDirective, UserFinalState,
+        parse_assistant_payload, parse_assistant_status, parse_shorthand_args, parse_task_cli_args,
+        print_and_validate_response, resolve_task_arguments, response_has_failure_language,
+        strip_internal_status_lines, AssistantStatus, Cli, PipedStdin, ResponseDirective,
+        UserFinalState,
     };
     use clap::Parser;
 
@@ -1931,5 +2113,96 @@ mod tests {
     fn test_cli_parses_silent_flag() {
         let cli = Cli::parse_from(["rai", "-s", "run", "hello"]);
         assert!(cli.silent);
+    }
+
+    #[test]
+    fn test_parse_task_cli_args_supports_named_and_positional() {
+        let raw = vec![
+            "--input".to_string(),
+            "source.md".to_string(),
+            "extra-positional".to_string(),
+            "--output=target/output.rtf".to_string(),
+        ];
+        let parsed = parse_task_cli_args(&raw).expect("task args should parse");
+        assert_eq!(parsed.positional, vec!["extra-positional".to_string()]);
+        assert_eq!(parsed.named.get("input"), Some(&"source.md".to_string()));
+        assert_eq!(
+            parsed.named.get("output"),
+            Some(&"target/output.rtf".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_task_cli_args_missing_value_errors() {
+        let raw = vec!["--input".to_string()];
+        let error = parse_task_cli_args(&raw).unwrap_err();
+        assert!(error.to_string().contains("Missing value"));
+    }
+
+    #[test]
+    fn test_resolve_task_arguments_named_flags_with_optional_args() {
+        let global = vec![
+            "input".to_string(),
+            "output".to_string(),
+            "input_format?".to_string(),
+            "output_format?".to_string(),
+        ];
+        let section = vec![];
+        let content =
+            "Convert {{ input }} to {{ output }} ({{ input_format }} -> {{ output_format }})";
+        let raw = vec![
+            "--input".to_string(),
+            "demo/source.md".to_string(),
+            "--output".to_string(),
+            "target/out.rtf".to_string(),
+        ];
+
+        let resolved = resolve_task_arguments(&global, &section, content, &raw, false)
+            .expect("named flags with optional args should resolve");
+        assert_eq!(
+            resolved.variables.get("input"),
+            Some(&"demo/source.md".to_string())
+        );
+        assert_eq!(
+            resolved.variables.get("output"),
+            Some(&"target/out.rtf".to_string())
+        );
+        assert_eq!(
+            resolved.variables.get("input_format"),
+            Some(&"".to_string())
+        );
+        assert_eq!(
+            resolved.variables.get("output_format"),
+            Some(&"".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_task_arguments_missing_required_errors() {
+        let global = vec!["input".to_string(), "output".to_string()];
+        let section = vec![];
+        let content = "Convert {{ input }} to {{ output }}";
+        let raw = vec!["--input".to_string(), "demo/source.md".to_string()];
+
+        let error = resolve_task_arguments(&global, &section, content, &raw, false).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("Missing arguments"));
+        assert!(message.contains("output"));
+    }
+
+    #[test]
+    fn test_resolve_task_arguments_unknown_named_argument_errors() {
+        let global = vec!["input".to_string(), "output".to_string()];
+        let section = vec![];
+        let content = "Convert {{ input }} to {{ output }}";
+        let raw = vec![
+            "--input".to_string(),
+            "demo/source.md".to_string(),
+            "--target".to_string(),
+            "target/out.rtf".to_string(),
+        ];
+
+        let error = resolve_task_arguments(&global, &section, content, &raw, false).unwrap_err();
+        assert!(error.to_string().contains("Unknown argument"));
     }
 }

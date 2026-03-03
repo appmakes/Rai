@@ -26,6 +26,7 @@ Common commands:
 - `rai start` — first-time setup wizard
 - `rai run "Summarize this text"` — run an ad-hoc prompt
 - `rai run task.md` — run a task file
+- `rai run task.md --input foo --output bar` — run task file with named task args
 - `rai plan task.md` — preview task structure before execution
 - `rai create task.md` — create a task file interactively
 - `rai config` — open configuration menu

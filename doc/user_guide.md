@@ -77,6 +77,27 @@ rai task.md src/main.rs
 
 If your `task.md` has `{{ filename }}`, the above command will inject `src/main.rs` into that position.
 
+You can also pass named flags:
+
+```bash
+rai convert-format.md --input source.md --output target/out.rtf
+```
+
+Named task flags support both `--name value` and `--name=value` forms.
+
+Optional arguments can be declared in task frontmatter by suffixing `?`:
+
+```yaml
+args:
+  - input
+  - output
+  - input_format?
+  - output_format?
+```
+
+- Required args (no `?`) must be provided in non-interactive mode.
+- Optional args (`?`) default to empty values when omitted.
+
 ### 4.5 Billing Summary (`--bill`)
 Use `--bill` to print API usage for the current command:
 
