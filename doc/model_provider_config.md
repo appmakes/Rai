@@ -8,10 +8,10 @@ Rai currently supports:
 
 - **Native provider implementations**
   - `poe`
+  - `openai`
   - `anthropic`
   - `google` (Gemini API)
 - **OpenAI-compatible built-ins** (using `/chat/completions`)
-  - `openai`
   - `xai`
   - `openrouter`
   - `ollama` (local)

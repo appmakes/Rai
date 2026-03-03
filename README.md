@@ -58,8 +58,8 @@ Flags (global unless noted):
 - Non-default profile config: `~/.config/rai/config.<profile>.toml`
 - If no profile is explicitly selected, `rai` falls back to `default` and auto-creates it when missing
 - Supported providers:
-  - Native: `poe`, `anthropic`, `google`
-  - OpenAI-compatible built-ins: `openai`, `xai`, `openrouter`, `ollama`, `deepseek`, `minimax`, `kimi`, `zai`, `bedrock`
+  - Native: `poe`, `openai`, `anthropic`, `google`
+  - OpenAI-compatible built-ins: `xai`, `openrouter`, `ollama`, `deepseek`, `minimax`, `kimi`, `zai`, `bedrock`
   - Generic OpenAI-compatible: `openai-compatible` (configure `provider_base_url`)
 - `provider_base_url` can override endpoint base URL per profile (required for `openai-compatible`, optional for OpenAI-compatible built-ins)
 - API key lookup order:

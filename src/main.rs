@@ -211,6 +211,10 @@ fn resolve_provider(config: &Config) -> anyhow::Result<Box<dyn Provider>> {
 
     match provider.as_str() {
         "poe" => Ok(Box::new(providers::poe::PoeProvider::new(&config.api_key))),
+        "openai" => Ok(Box::new(providers::openai::OpenAiProvider::new(
+            &config.api_key,
+            base_url,
+        )?)),
         "anthropic" => Ok(Box::new(providers::anthropic::AnthropicProvider::new(
             &config.api_key,
             base_url,
@@ -2506,13 +2510,22 @@ mod tests {
         let config = provider_test_config("openai-compatible", "dummy-key", "");
         let result = resolve_provider(&config);
         assert!(result.is_err(), "base URL should be required");
-        let message = result.err().map(|error| error.to_string()).unwrap_or_default();
+        let message = result
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
         assert!(message.contains("requires a base URL"));
     }
 
     #[test]
     fn test_resolve_provider_supports_anthropic_when_api_key_present() {
         let config = provider_test_config("anthropic", "dummy-key", "");
+        assert!(resolve_provider(&config).is_ok());
+    }
+
+    #[test]
+    fn test_resolve_provider_supports_openai_when_api_key_present() {
+        let config = provider_test_config("openai", "dummy-key", "");
         assert!(resolve_provider(&config).is_ok());
     }
 }
