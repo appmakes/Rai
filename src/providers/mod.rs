@@ -1,3 +1,6 @@
+pub mod anthropic;
+pub mod google;
+pub mod openai_compatible;
 pub mod poe;
 
 use anyhow::Result;
@@ -88,15 +91,19 @@ pub fn get_billing_stats() -> BillingStats {
 
 pub fn extract_usage_tokens(response_json: &serde_json::Value) -> (u64, u64) {
     let usage = &response_json["usage"];
+    let usage_metadata = &response_json["usageMetadata"];
     let input_tokens = usage["prompt_tokens"]
         .as_u64()
         .or_else(|| usage["input_tokens"].as_u64())
         .or_else(|| usage["promptTokens"].as_u64())
+        .or_else(|| usage_metadata["promptTokenCount"].as_u64())
         .unwrap_or(0);
     let output_tokens = usage["completion_tokens"]
         .as_u64()
         .or_else(|| usage["output_tokens"].as_u64())
         .or_else(|| usage["completionTokens"].as_u64())
+        .or_else(|| usage_metadata["candidatesTokenCount"].as_u64())
+        .or_else(|| usage_metadata["responseTokenCount"].as_u64())
         .unwrap_or(0);
     (input_tokens, output_tokens)
 }
@@ -241,6 +248,19 @@ mod tests {
         let (input, output) = extract_usage_tokens(&response);
         assert_eq!(input, 0);
         assert_eq!(output, 0);
+    }
+
+    #[test]
+    fn extract_usage_tokens_supports_google_usage_metadata() {
+        let response = json!({
+            "usageMetadata": {
+                "promptTokenCount": 8,
+                "candidatesTokenCount": 4
+            }
+        });
+        let (input, output) = extract_usage_tokens(&response);
+        assert_eq!(input, 8);
+        assert_eq!(output, 4);
     }
 
     #[test]

@@ -4,12 +4,24 @@ Rai supports multiple AI providers. This guide explains how to configure provide
 
 ## Supported Providers
 
-Currently, the following providers are supported:
+Rai currently supports:
 
-- **Poe** (Phase 3 Integration)
-- **OpenAI** (Planned)
-- **Anthropic** (Planned)
-- **Google** (Planned)
+- **Native provider implementations**
+  - `poe`
+  - `anthropic`
+  - `google` (Gemini API)
+- **OpenAI-compatible built-ins** (using `/chat/completions`)
+  - `openai`
+  - `xai`
+  - `openrouter`
+  - `ollama` (local)
+  - `deepseek`
+  - `minimax`
+  - `kimi`
+  - `zai` (`z.ai` alias supported)
+  - `bedrock` (requires OpenAI-compatible Bedrock gateway/base URL)
+- **Generic OpenAI-compatible provider**
+  - `openai-compatible` (fully custom base URL + key + model)
 
 ## Configuration
 
@@ -40,9 +52,10 @@ Example:
 # ~/.config/rai/config.toml
 default_profile = "default"
 active_profile = "default"
-providers = ["poe", "openai"]
-default_provider = "poe"
+providers = ["openai-compatible"]
+default_provider = "openai-compatible"
 default_model = "gpt-4o"
+provider_base_url = "https://api.openai.com/v1"
 tool_mode = "ask"
 no_tools = false
 auto_approve = false
@@ -57,6 +70,10 @@ Provider selection rules:
 
 Rai supports setting API keys via environment variables for automation or to piggyback on existing CLI tools.
 
+### Global Override
+
+`RAI_API_KEY` can override the active provider key for the current run.
+
 ### Provider-Specific Keys
 Rai automatically detects keys from standard environment variables used by other tools:
 
@@ -66,10 +83,40 @@ Rai automatically detects keys from standard environment variables used by other
 | **OpenAI** | `OPENAI_API_KEY` |
 | **Anthropic** | `ANTHROPIC_API_KEY` |
 | **Google** | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| **xAI** | `XAI_API_KEY` |
+| **OpenRouter** | `OPENROUTER_API_KEY` |
+| **DeepSeek** | `DEEPSEEK_API_KEY` |
+| **MiniMax** | `MINIMAX_API_KEY` |
+| **Kimi** | `KIMI_API_KEY`, `MOONSHOT_API_KEY` |
+| **z.ai / zai** | `ZAI_API_KEY` |
+| **OpenAI-compatible** | `RAI_OPENAI_COMPAT_API_KEY`, `OPENAI_COMPAT_API_KEY` |
 
 API key resolution order:
-1. System keyring (profile-scoped first, then provider-level fallback)
+1. `RAI_API_KEY`
 2. Provider-specific environment variable(s)
+3. Generic provider env var (`<PROVIDER>_API_KEY`)
+4. System keyring (profile-scoped first, then provider-level fallback)
+
+## OpenAI-compatible Generic Provider
+
+Use `openai-compatible` when a provider exposes OpenAI-style endpoints but does not need a dedicated implementation.
+
+Required/typical profile settings:
+
+```toml
+providers = ["openai-compatible"]
+default_provider = "openai-compatible"
+provider_base_url = "https://your-llm.example.com/v1"
+default_model = "your-model-name"
+```
+
+Then set API key via keyring (`rai config`) or env var (`RAI_OPENAI_COMPAT_API_KEY`/`OPENAI_COMPAT_API_KEY`/`RAI_API_KEY`).
+
+Notes:
+- `provider_base_url` may be either:
+  - base API URL ending with `/v1`, or
+  - full endpoint ending with `/chat/completions`.
+- `default_model` is used unless overridden via CLI `--model`.
 
 ## Model Selection
 
