@@ -685,22 +685,22 @@ impl Config {
         Ok(proj_dirs.config_dir().to_path_buf())
     }
 
-    // Helper to resolve API key from Keyring -> Provider Env
-    pub fn resolve_api_key(&mut self) -> Result<()> {
+    // Helper to resolve API key from store (file or keyring) -> Provider Env
+    pub fn resolve_api_key(&mut self, use_keyring: bool) -> Result<()> {
         if self.provider.trim().is_empty() {
             return Ok(());
         }
 
-        // 1. Check Keyring first (profile-scoped then legacy provider scope).
+        // 1. Check credentials store (file or keyring): profile-scoped then legacy provider scope.
         #[cfg(not(test))]
         {
             let profile_scoped = format!("{}:{}", self.profile, self.provider);
-            if let Ok(key) = crate::get_api_key_helper(&profile_scoped) {
+            if let Ok(key) = crate::get_api_key_helper(&profile_scoped, use_keyring) {
                 self.api_key = key;
                 return Ok(());
             }
 
-            if let Ok(key) = crate::get_api_key_helper(&self.provider) {
+            if let Ok(key) = crate::get_api_key_helper(&self.provider, use_keyring) {
                 self.api_key = key;
                 return Ok(());
             }

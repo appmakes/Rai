@@ -21,13 +21,13 @@ mod tools;
 
 use providers::{get_billing_stats, reset_billing_stats, BillingStats, Provider};
 
-fn set_api_key_helper(provider: &str, api_key: &str) -> anyhow::Result<()> {
-    key_store::set_api_key(provider, api_key)
+fn set_api_key_helper(provider: &str, api_key: &str, use_keyring: bool) -> anyhow::Result<()> {
+    key_store::set_api_key(provider, api_key, use_keyring)
 }
 
 #[cfg(not(test))]
-fn get_api_key_helper(provider: &str) -> anyhow::Result<String> {
-    key_store::get_api_key(provider)
+fn get_api_key_helper(provider: &str, use_keyring: bool) -> anyhow::Result<String> {
+    key_store::get_api_key(provider, use_keyring)
 }
 
 fn is_interactive() -> bool {
@@ -95,6 +95,10 @@ struct Cli {
     /// Select configuration profile
     #[arg(long, global = true)]
     profile: Option<String>,
+
+    /// Use OS keyring for API keys (default: use credentials file at ~/.local/share/rai/credentials)
+    #[arg(long, global = true)]
+    keyring: bool,
 
     /// Task description or file path (shorthand for `rai run`)
     task: Option<String>,
@@ -564,6 +568,7 @@ struct ExecutionOptions<'a> {
     detail_enabled: bool,
     think_enabled: bool,
     silent_enabled: bool,
+    use_keyring: bool,
 }
 
 fn execution_options_from_cli(cli: &Cli) -> ExecutionOptions<'_> {
@@ -575,6 +580,7 @@ fn execution_options_from_cli(cli: &Cli) -> ExecutionOptions<'_> {
         detail_enabled: cli.detail,
         think_enabled: cli.think,
         silent_enabled: cli.silent,
+        use_keyring: cli.keyring,
     }
 }
 
@@ -597,12 +603,12 @@ async fn handle_run(
     }
 
     let mut config = Config::load(opts.profile_override)?;
-    config.resolve_api_key()?;
+    config.resolve_api_key(opts.use_keyring)?;
 
-    // If current provider has no key, use the first provider that has credentials (env or keyring)
+    // If current provider has no key, use the first provider that has credentials (env or store)
     if config.api_key.is_empty() {
         for provider in available_providers() {
-            if let Some(key) = get_key_for_provider(&config.profile, provider) {
+            if let Some(key) = get_key_for_provider(&config.profile, provider, opts.use_keyring) {
                 config.provider = provider.to_string();
                 config.providers = vec![provider.to_string()];
                 config.default_provider = Some(provider.to_string());
@@ -614,7 +620,7 @@ async fn handle_run(
 
     if config.api_key.is_empty() {
         anyhow::bail!(
-            "No API key found. Set a provider-specific env var (e.g. POE_API_KEY) or add a .env file, or run `rai config` to save a key to keyring."
+            "No API key found. Set a provider-specific env var (e.g. POE_API_KEY), add a .env file, or run `rai config` to save a key (see --keyring for OS keyring)."
         );
     }
 
@@ -1266,22 +1272,27 @@ fn print_and_validate_response(
     }
 }
 
-fn set_profile_api_key(profile: &str, provider: &str, api_key: &str) -> anyhow::Result<()> {
+fn set_profile_api_key(
+    profile: &str,
+    provider: &str,
+    api_key: &str,
+    use_keyring: bool,
+) -> anyhow::Result<()> {
     if api_key.trim().is_empty() {
         return Ok(());
     }
     let scoped_provider = format!("{}:{}", profile, provider);
-    set_api_key_helper(&scoped_provider, api_key)
-        .context("Failed to save profile-scoped API key to keyring")?;
-    // Backward-compatible fallback key.
-    let _ = set_api_key_helper(provider, api_key);
+    let store_name = if use_keyring { "keyring" } else { "credentials file" };
+    set_api_key_helper(&scoped_provider, api_key, use_keyring)
+        .with_context(|| format!("Failed to save profile-scoped API key to {}", store_name))?;
+    let _ = set_api_key_helper(provider, api_key, use_keyring);
 
-    // Verify we can immediately read the just-saved key to catch keyring issues early.
+    // Verify read-back only for keyring (file store is trusted; keyring can have permission issues)
     #[cfg(not(test))]
-    {
-        if get_api_key_helper(&scoped_provider).is_err() {
+    if use_keyring {
+        if get_api_key_helper(&scoped_provider, use_keyring).is_err() {
             anyhow::bail!(
-                "API key was not readable from keyring after save. Check OS keyring access permissions and try again."
+                "API key was not readable from keyring after save. Check OS keyring access permissions, or run without --keyring to use the credentials file instead."
             );
         }
     }
@@ -1319,47 +1330,55 @@ fn get_key_for_provider_from_env(provider: &str) -> Option<String> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProviderKeySource {
     Env,
-    Keyring,
+    Store, // credentials file or keyring (shown as "configured")
 }
 
 #[cfg(not(test))]
-fn profile_provider_key_source(profile: &str, provider: &str) -> Option<ProviderKeySource> {
+fn profile_provider_key_source(
+    profile: &str,
+    provider: &str,
+    use_keyring: bool,
+) -> Option<ProviderKeySource> {
     if get_key_for_provider_from_env(provider).is_some() {
         return Some(ProviderKeySource::Env);
     }
     let scoped_provider = format!("{}:{}", profile, provider);
-    if let Ok(key) = get_api_key_helper(&scoped_provider) {
+    if let Ok(key) = get_api_key_helper(&scoped_provider, use_keyring) {
         if !key.trim().is_empty() {
-            return Some(ProviderKeySource::Keyring);
+            return Some(ProviderKeySource::Store);
         }
     }
-    if let Ok(key) = get_api_key_helper(provider) {
+    if let Ok(key) = get_api_key_helper(provider, use_keyring) {
         if !key.trim().is_empty() {
-            return Some(ProviderKeySource::Keyring);
+            return Some(ProviderKeySource::Store);
         }
     }
     None
 }
 
 #[cfg(test)]
-fn profile_provider_key_source(_profile: &str, _provider: &str) -> Option<ProviderKeySource> {
+fn profile_provider_key_source(
+    _profile: &str,
+    _provider: &str,
+    _use_keyring: bool,
+) -> Option<ProviderKeySource> {
     None
 }
 
-/// Resolves API key for (profile, provider) from env then keyring. Used so rai run can use a provider with existing credentials.
-fn get_key_for_provider(profile: &str, provider: &str) -> Option<String> {
+/// Resolves API key for (profile, provider) from env then store (file or keyring).
+fn get_key_for_provider(profile: &str, provider: &str, use_keyring: bool) -> Option<String> {
     if let Some(key) = get_key_for_provider_from_env(provider) {
         return Some(key);
     }
     #[cfg(not(test))]
     {
         let scoped = format!("{}:{}", profile, provider);
-        if let Ok(key) = get_api_key_helper(&scoped) {
+        if let Ok(key) = get_api_key_helper(&scoped, use_keyring) {
             if !key.trim().is_empty() {
                 return Some(key);
             }
         }
-        if let Ok(key) = get_api_key_helper(provider) {
+        if let Ok(key) = get_api_key_helper(provider, use_keyring) {
             if !key.trim().is_empty() {
                 return Some(key);
             }
@@ -1369,12 +1388,12 @@ fn get_key_for_provider(profile: &str, provider: &str) -> Option<String> {
 }
 
 #[cfg(not(test))]
-fn profile_provider_has_saved_key(profile: &str, provider: &str) -> bool {
-    profile_provider_key_source(profile, provider).is_some()
+fn profile_provider_has_saved_key(profile: &str, provider: &str, use_keyring: bool) -> bool {
+    profile_provider_key_source(profile, provider, use_keyring).is_some()
 }
 
 #[cfg(test)]
-fn profile_provider_has_saved_key(_profile: &str, _provider: &str) -> bool {
+fn profile_provider_has_saved_key(_profile: &str, _provider: &str, _use_keyring: bool) -> bool {
     false
 }
 
@@ -1382,7 +1401,11 @@ fn available_providers() -> Vec<&'static str> {
     vec!["poe", "openai", "anthropic", "google", "xai"]
 }
 
-fn configure_provider_and_key(config: &mut Config, require_key: bool) -> anyhow::Result<()> {
+fn configure_provider_and_key(
+    config: &mut Config,
+    require_key: bool,
+    use_keyring: bool,
+) -> anyhow::Result<()> {
     print_section("Provider");
     let providers = available_providers();
     let default_idx = providers
@@ -1392,16 +1415,19 @@ fn configure_provider_and_key(config: &mut Config, require_key: bool) -> anyhow:
     let provider_labels: Vec<String> = providers
         .iter()
         .map(|provider| {
-            match profile_provider_key_source(&config.profile, provider) {
+            match profile_provider_key_source(&config.profile, provider, use_keyring) {
                 Some(ProviderKeySource::Env) => format!("{} [read from env]", provider),
-                Some(ProviderKeySource::Keyring) => format!("{} [configured]", provider),
+                Some(ProviderKeySource::Store) => format!("{} [configured]", provider),
                 None => format!("{} [not configured]", provider),
             }
         })
         .collect();
-    println!(
-        "Hint: [read from env] = key from POE_API_KEY etc.; [configured] = key in OS keyring."
-    );
+    let store_hint = if use_keyring {
+        "[configured] = key in OS keyring."
+    } else {
+        "[configured] = key in credentials file (~/.local/share/rai/credentials)."
+    };
+    println!("Hint: [read from env] = key from POE_API_KEY etc.; {}", store_hint);
     let selection = Select::new()
         .with_prompt("Select provider")
         .items(&provider_labels)
@@ -1419,13 +1445,19 @@ fn configure_provider_and_key(config: &mut Config, require_key: bool) -> anyhow:
     config.providers = vec![provider.clone()];
     config.default_provider = Some(provider.clone());
 
-    let has_saved_key = profile_provider_has_saved_key(&config.profile, &provider);
-    println!(
-        "Security: API keys are stored in your OS keyring (secure encrypted credential store), not in plain-text config files."
-    );
+    let has_saved_key = profile_provider_has_saved_key(&config.profile, &provider, use_keyring);
+    if use_keyring {
+        println!(
+            "Security: API keys will be stored in your OS keyring (secure encrypted credential store)."
+        );
+    } else {
+        println!(
+            "Security: API keys are stored in ~/.local/share/rai/credentials (mode 0600, not in config files)."
+        );
+    }
     loop {
         let key_prompt = if has_saved_key || !require_key {
-            "API key (leave empty to keep current keyring value)"
+            "API key (leave empty to keep current value)"
         } else {
             "API key (required for setup)"
         };
@@ -1434,10 +1466,11 @@ fn configure_provider_and_key(config: &mut Config, require_key: bool) -> anyhow:
             .allow_empty(true)
             .interact_text()?;
         if !api_key.trim().is_empty() {
-            set_profile_api_key(&config.profile, &provider, &api_key)?;
+            set_profile_api_key(&config.profile, &provider, &api_key, use_keyring)?;
+            let where_stored = if use_keyring { "OS keyring" } else { "credentials file" };
             println!(
-                "Saved API key for provider '{}' in OS keyring (profile '{}').",
-                provider, config.profile
+                "Saved API key for provider '{}' in {} (profile '{}').",
+                provider, where_stored, config.profile
             );
             break;
         }
@@ -1622,7 +1655,7 @@ fn configure_profiles_menu(config: &mut Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_config(profile_override: Option<&str>) -> anyhow::Result<()> {
+fn handle_config(profile_override: Option<&str>, use_keyring: bool) -> anyhow::Result<()> {
     if !is_interactive() {
         anyhow::bail!(
             "Cannot run `rai config` in non-interactive mode. Set configuration via files/env vars."
@@ -1652,7 +1685,7 @@ fn handle_config(profile_override: Option<&str>) -> anyhow::Result<()> {
 
         match selection {
             Some(0) => {
-                configure_provider_and_key(&mut config, false)?;
+                configure_provider_and_key(&mut config, false, use_keyring)?;
                 autosave(&config)?;
             }
             Some(1) => {
@@ -1680,7 +1713,7 @@ fn handle_config(profile_override: Option<&str>) -> anyhow::Result<()> {
     }
 }
 
-fn handle_start(profile_override: Option<&str>) -> anyhow::Result<()> {
+fn handle_start(profile_override: Option<&str>, use_keyring: bool) -> anyhow::Result<()> {
     if !is_interactive() {
         anyhow::bail!(
             "Cannot run `rai start` in non-interactive mode. Use `rai config` files/env vars instead."
@@ -1697,7 +1730,7 @@ fn handle_start(profile_override: Option<&str>) -> anyhow::Result<()> {
     print_section("Welcome to rai start");
     println!("We'll do a quick setup: provider, API key, and model.");
 
-    configure_provider_and_key(&mut config, true)?;
+    configure_provider_and_key(&mut config, true, use_keyring)?;
     configure_model_defaults(&mut config)?;
     config.save()?;
     Config::set_active_profile(&config.profile)?;
@@ -1712,7 +1745,7 @@ fn handle_start(profile_override: Option<&str>) -> anyhow::Result<()> {
         .default(0)
         .interact_opt()?;
     if matches!(selection, Some(1)) {
-        handle_config(Some(config.profile.as_str()))?;
+        handle_config(Some(config.profile.as_str()), use_keyring)?;
     }
 
     Ok(())
@@ -2003,11 +2036,11 @@ async fn dispatch_keyword_task_as_command(cli: &Cli, task_keyword: &str) -> anyh
             Ok(true)
         }
         "start" if cli.args.is_empty() => {
-            handle_start(cli.profile.as_deref())?;
+            handle_start(cli.profile.as_deref(), cli.keyring)?;
             Ok(true)
         }
         "config" if cli.args.is_empty() => {
-            handle_config(cli.profile.as_deref())?;
+            handle_config(cli.profile.as_deref(), cli.keyring)?;
             Ok(true)
         }
         _ => Ok(false),
@@ -2042,8 +2075,8 @@ async fn main() -> anyhow::Result<()> {
 
     let execution_result: anyhow::Result<()> = async {
         match &cli.command {
-            Some(Commands::Start) => handle_start(cli.profile.as_deref())?,
-            Some(Commands::Config) => handle_config(cli.profile.as_deref())?,
+            Some(Commands::Start) => handle_start(cli.profile.as_deref(), cli.keyring)?,
+            Some(Commands::Config) => handle_config(cli.profile.as_deref(), cli.keyring)?,
             Some(Commands::Profile { command }) => {
                 handle_profile_command(command, cli.profile.as_deref())?
             }

@@ -5,9 +5,7 @@
 ## Prerequisites
 
 - Rust toolchain (stable)
-- Linux packages for keyring support:
-  - `libdbus-1-dev`
-  - `pkg-config`
+- Optional (only if using `--keyring`): Linux packages for OS keyring support: `libdbus-1-dev`, `pkg-config`
 
 ## Build
 
@@ -39,6 +37,7 @@ Flags (global unless noted):
 - `-v, --verbose` — debugging (repeat to increase level)
 - `-m, --model <MODEL>` — override AI model (e.g. `gpt-4o`, `kimi-k2`)
 - `--profile <NAME>` — select configuration profile
+- `--keyring` — use OS keyring for API keys (default: credentials file at `~/.local/share/rai/credentials`, mode 0600)
 - `-y, --yes` — auto-approve all tool calls
 - `--no-tools` — disable tool calling (single-turn only)
 - `-s, --silent` — do not ask for follow-up input
@@ -58,6 +57,5 @@ Flags (global unless noted):
 - Non-default profile config: `~/.config/rai/config.<profile>.toml`
 - If no profile is explicitly selected, `rai` falls back to `default` and auto-creates it when missing
 - Supported provider today: `poe`
-- API key lookup order:
-  1. OS keyring (recommended)
-  2. provider env var (e.g. `POE_API_KEY`); a `.env` file in the current directory is loaded automatically
+- API keys: by default stored in `~/.local/share/rai/credentials` (mode 0600). Use `--keyring` to store and read from the OS keyring instead.
+- API key lookup order: credentials store (file or keyring if `--keyring`), then provider env var (e.g. `POE_API_KEY`). A `.env` file in the current directory is loaded automatically.

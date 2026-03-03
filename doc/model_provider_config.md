@@ -21,7 +21,7 @@ rai start
 
 This guides you through:
 1. **AI Provider**: e.g., `poe`, `openai`.
-2. **API Key**: Securely stored in your system keyring.
+2. **API Key**: Stored in `~/.local/share/rai/credentials` (mode 0600) by default, or in the OS keyring if you pass `--keyring`.
 3. **Default Model**: e.g., `gpt-4o`, `claude-3-opus`.
 
 For advanced changes, use the config hub:
@@ -67,9 +67,10 @@ Rai automatically detects keys from standard environment variables used by other
 | **Anthropic** | `ANTHROPIC_API_KEY` |
 | **Google** | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
 
-API key resolution order:
-1. System keyring (profile-scoped first, then provider-level fallback)
-2. Provider-specific environment variable(s)
+API key storage and resolution:
+- **Default**: API keys are stored in `~/.local/share/rai/credentials` (Unix; file mode 0600). Use `rai config` to add keys.
+- **With `--keyring`**: Keys are stored in and read from the OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service).
+- **Resolution order**: Credentials store (file or keyring when `--keyring` is used), then provider-specific environment variable(s).
 
 ## Model Selection
 
