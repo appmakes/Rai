@@ -657,7 +657,7 @@ async fn handle_run(
 
     if config.api_key.is_empty() && provider_catalog::provider_requires_api_key(&config.provider) {
         anyhow::bail!(
-            "No API key found. Set RAI_API_KEY or a provider-specific env var (e.g. POE_API_KEY, OPENAI_API_KEY), add a .env file, or run `rai config` to save a key to keyring."
+            "No API key found. Set a provider-specific env var (e.g. POE_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY), add a .env file, or run `rai config` to save a key to keyring."
         );
     }
 
@@ -1344,11 +1344,7 @@ fn get_key_for_provider_from_env(provider: &str) -> Option<String> {
             }
         }
     }
-
-    let generic_name = provider_catalog::generic_provider_env_var(&provider)?;
-    std::env::var(generic_name)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
+    None
 }
 
 /// Key source for provider selector labels.

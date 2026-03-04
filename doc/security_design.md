@@ -6,7 +6,6 @@ To ensure security, `rai` will **never** store API keys or secrets in plain text
 
 ### 1. Environment Variables (Highest Priority)
 Ideal for CI/CD pipelines and temporary overrides.
-- `RAI_API_KEY`: Global override for the current provider.
 - **Provider-Specific Discovery**: `rai` automatically checks standard environment variables used by other tools.
     - **OpenAI**: `OPENAI_API_KEY`
     - **Anthropic (Claude)**: `ANTHROPIC_API_KEY`
@@ -29,10 +28,9 @@ Contains **only** safe metadata:
 
 1. **Load Config**: Read `config.toml` to get the preferred `provider`.
 2. **Resolve API Key**:
-   1. Check `RAI_API_KEY` env var.
-   2. Check provider-specific standard env vars (e.g., `ANTHROPIC_API_KEY` for Claude).
-   3. If specific env var is missing, try to fetch from **System Keyring** (stored by `rai`).
-   4. If all fail, prompt the user (interactive mode) or error out.
+   1. Check provider-specific standard env vars (e.g., `ANTHROPIC_API_KEY` for Claude).
+   2. If specific env var is missing, try to fetch from **System Keyring** (stored by `rai`).
+   3. If all fail, prompt the user (interactive mode) or error out.
 
 ## Implementation Plan
 

@@ -70,10 +70,6 @@ Provider selection rules:
 
 Rai supports setting API keys via environment variables for automation or to piggyback on existing CLI tools.
 
-### Global Override
-
-`RAI_API_KEY` can override the active provider key for the current run.
-
 ### Provider-Specific Keys
 Rai automatically detects keys from standard environment variables used by other tools:
 
@@ -92,10 +88,8 @@ Rai automatically detects keys from standard environment variables used by other
 | **OpenAI-compatible** | `RAI_OPENAI_COMPAT_API_KEY`, `OPENAI_COMPAT_API_KEY` |
 
 API key resolution order:
-1. `RAI_API_KEY`
-2. Provider-specific environment variable(s)
-3. Generic provider env var (`<PROVIDER>_API_KEY`)
-4. System keyring (profile-scoped first, then provider-level fallback)
+1. Provider-specific environment variable(s)
+2. System keyring (profile-scoped first, then provider-level fallback)
 
 ## OpenAI-compatible Generic Provider
 
@@ -110,7 +104,7 @@ provider_base_url = "https://your-llm.example.com/v1"
 default_model = "your-model-name"
 ```
 
-Then set API key via keyring (`rai config`) or env var (`RAI_OPENAI_COMPAT_API_KEY`/`OPENAI_COMPAT_API_KEY`/`RAI_API_KEY`).
+Then set API key via keyring (`rai config`) or env var (`RAI_OPENAI_COMPAT_API_KEY`/`OPENAI_COMPAT_API_KEY`).
 
 Notes:
 - `provider_base_url` may be either:

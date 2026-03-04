@@ -494,7 +494,7 @@ In non-interactive environments (`CI=1` or non-TTY):
 
 ```bash
 # CI pipeline example
-RAI_API_KEY=$KEY rai --yes --read-only "summarize recent git changes"
+OPENAI_API_KEY=$KEY rai --yes --read-only "summarize recent git changes"
 ```
 
 ## 12. Iteration Limits

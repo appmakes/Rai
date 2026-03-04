@@ -158,10 +158,9 @@ Recommended keyring account format:
 - `<profile>:<provider>`
 
 Lookup order:
-1. `RAI_API_KEY`
-2. provider-specific env vars
-3. keyring `<profile>:<provider>`
-4. keyring legacy `<provider>` (compat fallback)
+1. provider-specific env vars
+2. keyring `<profile>:<provider>`
+3. keyring legacy `<provider>` (compat fallback)
 
 ---
 

@@ -710,15 +710,7 @@ impl Config {
         let normalized_provider = normalize_provider_name(&self.provider)
             .unwrap_or_else(|| self.provider.trim().to_ascii_lowercase());
 
-        // 1. Global override for automation.
-        if let Ok(key) = env::var("RAI_API_KEY") {
-            if !key.trim().is_empty() {
-                self.api_key = key;
-                return Ok(());
-            }
-        }
-
-        // 2. Provider-specific env vars.
+        // 1. Provider-specific env vars.
         for env_var in provider_catalog::provider_env_vars(&normalized_provider) {
             if let Ok(key) = env::var(env_var) {
                 if !key.trim().is_empty() {
@@ -728,18 +720,7 @@ impl Config {
             }
         }
 
-        // 3. Generic provider env var.
-        if let Some(provider_env) = provider_catalog::generic_provider_env_var(&normalized_provider)
-        {
-            if let Ok(key) = env::var(provider_env) {
-                if !key.trim().is_empty() {
-                    self.api_key = key;
-                    return Ok(());
-                }
-            }
-        }
-
-        // 4. Keyring fallback (profile-scoped first, then provider-level fallback).
+        // 2. Keyring fallback (profile-scoped first, then provider-level fallback).
         #[cfg(not(test))]
         {
             let profile_scoped = format!("{}:{}", self.profile, normalized_provider);

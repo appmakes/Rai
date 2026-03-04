@@ -63,6 +63,5 @@ Flags (global unless noted):
   - Generic OpenAI-compatible: `openai-compatible` (configure `provider_base_url`)
 - `provider_base_url` can override endpoint base URL per profile (required for `openai-compatible`, optional for OpenAI-compatible built-ins)
 - API key lookup order:
-  1. `RAI_API_KEY`
-  2. provider env var (e.g. `POE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`); a `.env` file in the current directory is loaded automatically
-  3. OS keyring (recommended)
+  1. provider env var (e.g. `POE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`); a `.env` file in the current directory is loaded automatically
+  2. OS keyring (recommended)
