@@ -29,7 +29,7 @@ Key commands:
 
 - Global config file: `~/.config/rai/config.toml` (e.g., `default_profile`, `active_profile`)
 - Profile config files: `~/.config/rai/config.<profile>.toml` (e.g., `providers`, `default_provider`, `default_model`, tool defaults)
-- API key resolution order: provider-specific env var (e.g. `POE_API_KEY`) → OS keyring
+- API key resolution order: provider-specific env var (e.g. `POE_API_KEY`) → local credential storage (OS keyring or credential-file backend)
 - Only the `poe` provider is implemented; set `providers = ["poe"]` and `default_provider = "poe"` in config
 - The `keyring` crate requires `libdbus-1-dev` on Linux (system dependency)
 - CI/CD mode (detected via `CI` env var or non-TTY stdin) disables interactive prompts

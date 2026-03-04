@@ -657,7 +657,7 @@ async fn handle_run(
 
     if config.api_key.is_empty() && provider_catalog::provider_requires_api_key(&config.provider) {
         anyhow::bail!(
-            "No API key found. Set a provider-specific env var (e.g. POE_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY), add a .env file, or run `rai config` to save a key to keyring."
+            "No API key found. Set a provider-specific env var (e.g. POE_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY), add a .env file, or run `rai config` to save a key to credential storage."
         );
     }
 
@@ -1315,7 +1315,7 @@ fn set_profile_api_key(profile: &str, provider: &str, api_key: &str) -> anyhow::
     }
     let scoped_provider = format!("{}:{}", profile, provider);
     set_api_key_helper(&scoped_provider, api_key)
-        .context("Failed to save profile-scoped API key to keyring")?;
+        .context("Failed to save profile-scoped API key to credential store")?;
     // Backward-compatible fallback key.
     let _ = set_api_key_helper(provider, api_key);
 
@@ -1324,7 +1324,7 @@ fn set_profile_api_key(profile: &str, provider: &str, api_key: &str) -> anyhow::
     {
         if get_api_key_helper(&scoped_provider).is_err() {
             anyhow::bail!(
-                "API key was not readable from keyring after save. Check OS keyring access permissions and try again."
+                "API key was not readable from the credential store after save. Check keyring/credential backend permissions and try again."
             );
         }
     }
@@ -1488,7 +1488,7 @@ fn configure_provider_and_key(config: &mut Config, require_key: bool) -> anyhow:
         )
         .collect();
     println!(
-        "Hint: [read from env] = key from OPENAI_API_KEY/POE_API_KEY/etc.; [configured] = key in OS keyring."
+        "Hint: [read from env] = key from OPENAI_API_KEY/POE_API_KEY/etc.; [configured] = key in local credential storage (OS keyring or credential-file backend)."
     );
     let selection = Select::new()
         .with_prompt("Select provider")
@@ -1522,11 +1522,11 @@ fn configure_provider_and_key(config: &mut Config, require_key: bool) -> anyhow:
 
     let has_saved_key = profile_provider_has_saved_key(&config.profile, &provider);
     println!(
-        "Security: API keys are stored in your OS keyring (secure encrypted credential store), not in plain-text config files."
+        "Security: API keys are stored in local credential storage (OS keyring or credential-file backend), not in plain-text config files."
     );
     loop {
         let key_prompt = if has_saved_key || !require_key || !requires_key {
-            "API key (leave empty to keep current keyring value)"
+            "API key (leave empty to keep current stored credential value)"
         } else {
             "API key (required for setup)"
         };
@@ -1537,7 +1537,7 @@ fn configure_provider_and_key(config: &mut Config, require_key: bool) -> anyhow:
         if !api_key.trim().is_empty() {
             set_profile_api_key(&config.profile, &provider, &api_key)?;
             println!(
-                "Saved API key for provider '{}' in OS keyring (profile '{}').",
+                "Saved API key for provider '{}' in local credential storage (profile '{}').",
                 provider, config.profile
             );
             break;

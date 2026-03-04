@@ -33,7 +33,7 @@ rai start
 
 This guides you through:
 1. **AI Provider**: e.g., `poe`, `openai`.
-2. **API Key**: Securely stored in your system keyring.
+2. **API Key**: Securely stored in local credential storage (OS keyring or credential-file backend).
 3. **Default Model**: e.g., `gpt-4o`, `claude-3-opus`.
 
 For advanced changes, use the config hub:
@@ -89,7 +89,7 @@ Rai automatically detects keys from standard environment variables used by other
 
 API key resolution order:
 1. Provider-specific environment variable(s)
-2. System keyring (profile-scoped first, then provider-level fallback)
+2. Local credential storage (profile-scoped first, then provider-level fallback; backend can be OS keyring or credential file)
 
 ## OpenAI-compatible Generic Provider
 
@@ -104,7 +104,7 @@ provider_base_url = "https://your-llm.example.com/v1"
 default_model = "your-model-name"
 ```
 
-Then set API key via keyring (`rai config`) or env var (`RAI_OPENAI_COMPAT_API_KEY`/`OPENAI_COMPAT_API_KEY`).
+Then set API key via local credential storage (`rai config`) or env var (`RAI_OPENAI_COMPAT_API_KEY`/`OPENAI_COMPAT_API_KEY`).
 
 Notes:
 - `provider_base_url` may be either:
