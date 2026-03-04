@@ -77,7 +77,7 @@ Rai automatically detects keys from standard environment variables used by other
 |----------|----------------------|
 | **Poe** | `POE_API_KEY` |
 | **OpenAI** | `OPENAI_API_KEY` |
-| **Anthropic** | `ANTHROPIC_API_KEY` |
+| **Anthropic** | `ANTHROPIC_API_KEY`, `CLAUDE_API_KEY` |
 | **Google** | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
 | **xAI** | `XAI_API_KEY` |
 | **OpenRouter** | `OPENROUTER_API_KEY` |

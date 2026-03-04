@@ -45,7 +45,7 @@ pub fn provider_env_vars(provider: &str) -> Vec<&'static str> {
     match normalized.as_str() {
         "poe" => vec!["POE_API_KEY"],
         "openai" => vec!["OPENAI_API_KEY"],
-        "anthropic" => vec!["ANTHROPIC_API_KEY"],
+        "anthropic" => vec!["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
         "google" => vec!["GEMINI_API_KEY", "GOOGLE_API_KEY"],
         "xai" => vec!["XAI_API_KEY"],
         "openrouter" => vec!["OPENROUTER_API_KEY"],
@@ -128,7 +128,10 @@ mod tests {
 
     #[test]
     fn provider_env_vars_match_expected_table_entries() {
-        assert_eq!(provider_env_vars("anthropic"), vec!["ANTHROPIC_API_KEY"]);
+        assert_eq!(
+            provider_env_vars("anthropic"),
+            vec!["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"]
+        );
         assert_eq!(provider_env_vars("z.ai"), vec!["ZAI_API_KEY"]);
         assert_eq!(provider_env_vars("bedrock"), Vec::<&str>::new());
     }

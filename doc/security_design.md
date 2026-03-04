@@ -8,7 +8,7 @@ To ensure security, `rai` will **never** store API keys or secrets in plain text
 Ideal for CI/CD pipelines and temporary overrides.
 - **Provider-Specific Discovery**: `rai` automatically checks standard environment variables used by other tools.
     - **OpenAI**: `OPENAI_API_KEY`
-    - **Anthropic (Claude)**: `ANTHROPIC_API_KEY`
+    - **Anthropic (Claude)**: `ANTHROPIC_API_KEY`, `CLAUDE_API_KEY`
     - **Gemini (Google)**: `GEMINI_API_KEY`, `GOOGLE_API_KEY`
     - **Poe**: `POE_API_KEY`
 
@@ -28,7 +28,7 @@ Contains **only** safe metadata:
 
 1. **Load Config**: Read `config.toml` to get the preferred `provider`.
 2. **Resolve API Key**:
-   1. Check provider-specific standard env vars (e.g., `ANTHROPIC_API_KEY` for Claude).
+   1. Check provider-specific standard env vars (e.g., `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY` for Claude).
    2. If specific env var is missing, try to fetch from **System Keyring** (stored by `rai`).
    3. If all fail, prompt the user (interactive mode) or error out.
 
