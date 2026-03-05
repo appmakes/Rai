@@ -68,12 +68,14 @@ impl Agent {
     }
 
     pub async fn run(&mut self, prompt: &str) -> Result<String> {
-        let system_prompt = build_system_prompt(self.config.think_enabled);
+        let ask_enabled = !self.config.auto_approve && !self.config.silent_enabled;
+        let system_prompt = build_system_prompt(self.config.think_enabled, ask_enabled);
         let tool_defs: Vec<ToolDefinition> = self.tools.iter().map(|t| t.definition()).collect();
 
         let active_tools: Vec<ToolDefinition> = tool_defs
             .iter()
             .filter(|t| !matches!(t.permission, Permission::Deny))
+            .filter(|t| ask_enabled || t.name != "ask")
             .cloned()
             .collect();
 
@@ -230,6 +232,17 @@ Do not stop yet.",
                     success: false,
                 });
             }
+        }
+
+        // Layer 0: Block interactive-only tools in non-interactive modes
+        if tc.name == "ask" && (self.config.auto_approve || self.config.silent_enabled) {
+            return Ok(crate::tools::ToolResult {
+                tool_call_id: tc.id.clone(),
+                output: "The ask tool is unavailable in --yes/--silent mode. \
+                    Make your best judgment and proceed without user input."
+                    .to_string(),
+                success: false,
+            });
         }
 
         // Layer 1: Global blocklist
@@ -454,13 +467,18 @@ Do not stop yet.",
     }
 }
 
-fn build_system_prompt(think_enabled: bool) -> String {
+fn build_system_prompt(think_enabled: bool, ask_enabled: bool) -> String {
     let os = std::env::consts::OS;
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| ".".to_string());
     let think_rule = if think_enabled {
         "- Think mode is enabled. Include your full reasoning chain inside <think>...</think> before the final answer.\n"
+    } else {
+        ""
+    };
+    let ask_rule = if ask_enabled {
+        "- Use `ask` ONLY when you cannot proceed without the user choosing between options. Never use it for confirmations or when you can decide yourself."
     } else {
         ""
     };
@@ -492,13 +510,13 @@ Rules:
 - Never run destructive commands (rm -rf, drop table, etc.).
 - If a tool call is rejected, explain what you needed and suggest alternatives.
 - Keep tool usage minimal — only call tools when necessary.
-{}
+{}{}
 {}
 
 Environment:
 - OS: {}
 - Working directory: {}"#,
-        think_rule, status_rule, os, cwd
+        ask_rule, think_rule, status_rule, os, cwd
     )
 }
 
