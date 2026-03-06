@@ -23,6 +23,19 @@
         <li><a href="#user_guide" class="doc-link active" data-doc="user_guide">User Guide</a></li>
         <li><a href="#model_provider_config" class="doc-link" data-doc="model_provider_config">Model &amp; Provider Config</a></li>
       </ul>
+      <div class="docs-theme-switch">
+        <div class="theme-switch" id="theme-switch">
+          <button class="theme-btn active" data-theme="auto" aria-label="Auto theme">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+          </button>
+          <button class="theme-btn" data-theme="light" aria-label="Light theme">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          </button>
+          <button class="theme-btn" data-theme="dark" aria-label="Dark theme">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+          </button>
+        </div>
+      </div>
     </nav>
     <main class="docs-content" id="docs-content">
       <p class="docs-loading">Loading documentation...</p>
@@ -84,6 +97,30 @@
 
     // Initial load
     onHashChange();
+
+    // === Theme switcher ===
+    function getSystemTheme() {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+
+    function applyTheme(setting) {
+      const resolved = setting === 'auto' ? getSystemTheme() : setting;
+      document.documentElement.setAttribute('data-theme', resolved);
+      localStorage.setItem('theme', setting);
+      document.querySelectorAll('.theme-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.theme === setting);
+      });
+    }
+
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.addEventListener('click', () => applyTheme(btn.dataset.theme));
+    });
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (localStorage.getItem('theme') === 'auto') applyTheme('auto');
+    });
+
+    applyTheme(localStorage.getItem('theme') || 'auto');
   </script>
 </body>
 </html>

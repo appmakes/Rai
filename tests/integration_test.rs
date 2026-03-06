@@ -459,7 +459,7 @@ fn test_plan_translate_demo_task() {
 #[test]
 fn test_plan_template_task() {
     let output = rai_bin()
-        .args(["plan", "doc/template_task.md"])
+        .args(["plan", "doc/development/template_task.md"])
         .output()
         .unwrap();
     assert!(output.status.success());
