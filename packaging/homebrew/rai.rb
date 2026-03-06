@@ -16,10 +16,10 @@ class Rai < Formula
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/appmakes/Rai/releases/download/v#{version}/rai-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/appmakes/Rai/releases/download/v#{version}/rai-aarch64-linux-gnu.tar.gz"
       # sha256 "PLACEHOLDER" # Update after release build completes
     else
-      url "https://github.com/appmakes/Rai/releases/download/v#{version}/rai-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/appmakes/Rai/releases/download/v#{version}/rai-x86_64-linux-gnu.tar.gz"
       # sha256 "PLACEHOLDER" # Update after release build completes
     end
   end

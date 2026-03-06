@@ -10,7 +10,7 @@ INSTALL_DIR="${RAI_INSTALL_DIR:-$HOME/.local/bin}"
 # Detect OS
 OS="$(uname -s)"
 case "$OS" in
-  Linux)  os="unknown-linux-gnu" ;;
+  Linux)  os="linux-gnu" ;;
   Darwin) os="apple-darwin" ;;
   *)      echo "Error: unsupported OS: $OS"; exit 1 ;;
 esac

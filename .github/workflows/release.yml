@@ -20,19 +20,24 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
+            artifact_name: x86_64-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
           - target: aarch64-unknown-linux-gnu
+            artifact_name: aarch64-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
             cross: true
           - target: x86_64-apple-darwin
+            artifact_name: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
           - target: aarch64-apple-darwin
+            artifact_name: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
           - target: x86_64-pc-windows-msvc
+            artifact_name: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
 
@@ -74,7 +79,7 @@ jobs:
         if: matrix.archive == 'tar.gz'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../rai-${{ matrix.target }}.tar.gz rai
+          tar czf ../../../rai-${{ matrix.artifact_name }}.tar.gz rai
           cd ../../..
 
       - name: Package .deb (Linux x86_64)
@@ -117,14 +122,14 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          Compress-Archive -Path "target/${{ matrix.target }}/release/rai.exe" -DestinationPath "rai-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/rai.exe" -DestinationPath "rai-${{ matrix.artifact_name }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rai-${{ matrix.target }}
+          name: rai-${{ matrix.artifact_name }}
           path: |
-            rai-${{ matrix.target }}.${{ matrix.archive }}
+            rai-${{ matrix.artifact_name }}.${{ matrix.archive }}
             rai_*_*.deb
 
   release:
