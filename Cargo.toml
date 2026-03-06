@@ -1,6 +1,6 @@
 [package]
 name = "rai-cli"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["appmakes.io"]
@@ -14,6 +14,12 @@ readme = "README.md"
 [[bin]]
 name = "rai"
 path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"     # optimize for size
+lto = true          # link-time optimization – merges all crates
+codegen-units = 1   # single codegen unit for maximum optimization
+strip = true        # strip debug symbols from the binary
 
 [dependencies]
 anyhow = "1.0.95"
@@ -29,7 +35,7 @@ reqwest = { version = "0.13.2", features = ["json", "blocking"] }
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.149"
 serde_yaml = "0.9"
-tokio = { version = "1.43.0", features = ["full"] }
+tokio = { version = "1.43.0", features = ["rt-multi-thread", "macros"] }
 toml = "0.8.19"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
