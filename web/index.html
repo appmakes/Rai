@@ -54,6 +54,7 @@
       <!-- Section Divider -->
       <div class="section-divider">
         <span class="divider-text">Quick demo</span>
+        <svg class="divider-arrow" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </div>
 
       <!-- Feed List -->
@@ -78,8 +79,8 @@
                 <code class="code-line code-output">Total: 42 files, 1.2 MB combined</code>
               </div>
               <div class="code-group">
-                <code class="code-line">$ rai --yes "Clean up feature flags.md"</code>
-                <code class="code-line code-output">Removed 3 stale flags, 2 remain. See diff below.</code>
+                <code class="code-line">$ rai --model kimi-k2.5 "FIX_TODO.md" ~/my-project</code>
+                <code class="code-line code-output">Fixed 5 TODOs across 3 files. See diff below.</code>
               </div>
             </div>
           </div>
@@ -121,6 +122,104 @@
               <code class="code-line code-added">  - run: rai translate.md</code>
               <code class="code-line code-muted">  - run: npm run deploy</code>
             </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Usage -->
+      <div class="section-divider">
+        <span class="divider-text">Usage</span>
+        <svg class="divider-arrow" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+
+      <section class="quickstart">
+
+        <div class="qs-block">
+          <h3 class="qs-title">Install</h3>
+          <div class="code-block">
+            <code class="code-line code-muted"># via cargo</code>
+            <code class="code-line">$ cargo install rai-cli</code>
+            <code class="code-line">&nbsp;</code>
+            <code class="code-line code-muted"># or via curl</code>
+            <code class="code-line">$ curl -sSL https://appmakes.github.io/Rai/install.sh | sh</code>
+          </div>
+        </div>
+
+        <div class="qs-block">
+          <h3 class="qs-title">Setup &amp; configure</h3>
+          <p class="qs-desc">First-time setup picks your provider, API key, and default model. Revisit anytime with <code>rai config</code>.</p>
+          <div class="code-block">
+            <code class="code-line">$ rai start</code>
+            <code class="code-line code-output">? Select provider: OpenAI</code>
+            <code class="code-line code-output">? API key: sk-••••••••</code>
+            <code class="code-line code-output">? Default model: gpt-4o</code>
+            <code class="code-line code-output">✓ Config saved to ~/.config/rai/config.toml</code>
+          </div>
+        </div>
+
+        <div class="qs-block">
+          <h3 class="qs-title">Common flags</h3>
+          <div class="qs-table">
+            <div class="qs-row">
+              <code class="qs-flag">-m, --model</code>
+              <span class="qs-flag-desc">Override model per run</span>
+            </div>
+            <div class="qs-row">
+              <code class="qs-flag">-y, --yes</code>
+              <span class="qs-flag-desc">Auto-approve tool calls</span>
+            </div>
+            <div class="qs-row">
+              <code class="qs-flag">-s, --silent</code>
+              <span class="qs-flag-desc">No follow-up input</span>
+            </div>
+            <div class="qs-row">
+              <code class="qs-flag">--no-tools</code>
+              <span class="qs-flag-desc">Disable tool calling</span>
+            </div>
+            <div class="qs-row">
+              <code class="qs-flag">--bill</code>
+              <span class="qs-flag-desc">Print token &amp; cost summary</span>
+            </div>
+            <div class="qs-row">
+              <code class="qs-flag">--profile &lt;name&gt;</code>
+              <span class="qs-flag-desc">Use a named config profile</span>
+            </div>
+            <div class="qs-row">
+              <code class="qs-flag">--&lt;variable&gt; &lt;value&gt;</code>
+              <span class="qs-flag-desc">Pass custom variables to task files</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="qs-block">
+          <h3 class="qs-title">Task files</h3>
+          <p class="qs-desc">Run prompts directly, or write them as markdown files for complex, reusable tasks. Task files support frontmatter for model config and <code>{{ variables }}</code> for templating.</p>
+          <div class="code-block">
+            <code class="code-line code-muted"># Run a prompt directly</code>
+            <code class="code-line">$ rai "explain this error"</code>
+            <code class="code-line">&nbsp;</code>
+            <code class="code-line code-muted"># Or run a task file</code>
+            <code class="code-line">$ rai review.md</code>
+          </div>
+          <p class="qs-desc" style="margin-top: 16px;">Example task file with variables:</p>
+          <div class="code-block">
+            <code class="code-line code-muted"># review.md</code>
+            <code class="code-line">---</code>
+            <code class="code-line">model: gpt-4o</code>
+            <code class="code-line">args:</code>
+            <code class="code-line">  - target</code>
+            <code class="code-line">  - language</code>
+            <code class="code-line">  - focus?</code>
+            <code class="code-line">---</code>
+            <code class="code-line">&nbsp;</code>
+            <code class="code-line">Review {{ target }} written in {{ language }}.</code>
+            <code class="code-line">Focus on {{ focus }} if specified.</code>
+          </div>
+          <p class="qs-desc" style="margin-top: 12px;">Pass variables as positional or named args:</p>
+          <div class="code-block">
+            <code class="code-line">$ rai review.md src/main.rs rust</code>
+            <code class="code-line">$ rai review.md --target src/ --language rust --focus security</code>
           </div>
         </div>
 
@@ -198,44 +297,90 @@
     // Eye centers in SVG coordinates
     const eyeLCenter = { x: 70, y: 110 };
     const eyeRCenter = { x: 130, y: 110 };
-    const maxOffset = 5; // max px the pupil moves in SVG space
+    const maxOffset = 5;
+    let curOffsetX = 0, curOffsetY = 0;
 
+    // Glyph eye elements
+    const glyphs = ['*', '-', '/', '\\', '>', '_', 'A', 'a', 'R', 'i', '&', '$', '#', '@', '~'];
+    let glyphIndex = 0;
+    let useGlyphs = false; // start with circle eyes
+
+    const ns = 'http://www.w3.org/2000/svg';
+    const glyphL = document.createElementNS(ns, 'text');
+    const glyphR = document.createElementNS(ns, 'text');
+    [glyphL, glyphR].forEach(g => {
+      g.setAttribute('text-anchor', 'middle');
+      g.setAttribute('dominant-baseline', 'central');
+      g.setAttribute('font-family', 'JetBrains Mono, monospace');
+      g.setAttribute('font-size', '40');
+      g.setAttribute('font-weight', '700');
+      g.setAttribute('fill', 'currentColor');
+      g.style.display = 'none';
+    });
+    glyphL.setAttribute('x', '70');
+    glyphL.setAttribute('y', '110');
+    glyphR.setAttribute('x', '130');
+    glyphR.setAttribute('y', '110');
+    eyes.appendChild(glyphL);
+    eyes.appendChild(glyphR);
+
+    // Mouse tracking — moves whichever eye type is visible
     document.addEventListener('mousemove', (e) => {
       const rect = avatar.getBoundingClientRect();
-      const iconCenterX = rect.left + rect.width / 2;
-      const iconCenterY = rect.top + rect.height / 2;
-
-      const dx = e.clientX - iconCenterX;
-      const dy = e.clientY - iconCenterY;
+      const dx = e.clientX - (rect.left + rect.width / 2);
+      const dy = e.clientY - (rect.top + rect.height / 2);
       const dist = Math.sqrt(dx * dx + dy * dy);
-
-      // Normalize and scale — stronger effect when closer
       const factor = Math.min(1, 80 / Math.max(dist, 1));
-      const offsetX = (dx / Math.max(dist, 1)) * maxOffset * factor;
-      const offsetY = (dy / Math.max(dist, 1)) * maxOffset * factor;
+      curOffsetX = (dx / Math.max(dist, 1)) * maxOffset * factor;
+      curOffsetY = (dy / Math.max(dist, 1)) * maxOffset * factor;
 
-      eyeL.setAttribute('cx', eyeLCenter.x + offsetX);
-      eyeL.setAttribute('cy', eyeLCenter.y + offsetY);
-      eyeR.setAttribute('cx', eyeRCenter.x + offsetX);
-      eyeR.setAttribute('cy', eyeRCenter.y + offsetY);
+      eyeL.setAttribute('cx', eyeLCenter.x + curOffsetX);
+      eyeL.setAttribute('cy', eyeLCenter.y + curOffsetY);
+      eyeR.setAttribute('cx', eyeRCenter.x + curOffsetX);
+      eyeR.setAttribute('cy', eyeRCenter.y + curOffsetY);
+      glyphL.setAttribute('x', eyeLCenter.x + curOffsetX);
+      glyphL.setAttribute('y', eyeLCenter.y + curOffsetY);
+      glyphR.setAttribute('x', eyeRCenter.x + curOffsetX);
+      glyphR.setAttribute('y', eyeRCenter.y + curOffsetY);
     });
 
-    // Blink at random intervals
+    // Blink: close → open with new glyph (stays until next blink)
     function doBlink() {
+      const ch = glyphs[glyphIndex % glyphs.length];
+      glyphIndex++;
+
+      // Close: hide current eyes, show squished ellipse
+      glyphL.style.display = 'none';
+      glyphR.style.display = 'none';
+      eyeL.style.display = '';
+      eyeR.style.display = '';
       eyeL.setAttribute('ry', '1.5');
       eyeR.setAttribute('ry', '1.5');
       eyeL.setAttribute('rx', '11');
       eyeR.setAttribute('rx', '11');
+
+      // Open: switch to new glyph
       setTimeout(() => {
         eyeL.setAttribute('ry', '9');
         eyeR.setAttribute('ry', '9');
         eyeL.setAttribute('rx', '9');
         eyeR.setAttribute('rx', '9');
+        eyeL.style.display = 'none';
+        eyeR.style.display = 'none';
+        glyphL.textContent = ch;
+        glyphR.textContent = ch;
+        glyphL.setAttribute('x', eyeLCenter.x + curOffsetX);
+        glyphL.setAttribute('y', eyeLCenter.y + curOffsetY);
+        glyphR.setAttribute('x', eyeRCenter.x + curOffsetX);
+        glyphR.setAttribute('y', eyeRCenter.y + curOffsetY);
+        glyphL.style.display = '';
+        glyphR.style.display = '';
+        useGlyphs = true;
       }, 150);
     }
 
     function scheduleBlink() {
-      const delay = 2000 + Math.random() * 4000; // 2-6 seconds
+      const delay = 2000 + Math.random() * 4000;
       setTimeout(() => {
         doBlink();
         scheduleBlink();

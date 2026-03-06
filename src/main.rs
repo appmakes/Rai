@@ -104,7 +104,7 @@ struct Cli {
     /// Task description or file path (shorthand for `rai run`)
     task: Option<String>,
 
-    /// Arguments for the task (including #subtask selector)
+    /// Extra arguments: positional values, --variable value pairs for task templates, or #subtask selector
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
 
@@ -132,7 +132,7 @@ enum Commands {
         #[arg(long)]
         subtask: Option<String>,
 
-        /// Arguments for the task (including #subtask selector)
+        /// Extra arguments: positional values, --variable value pairs for task templates, or #subtask selector
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -150,7 +150,7 @@ enum Commands {
         #[arg(long)]
         subtask: Option<String>,
 
-        /// Arguments pre-filled for the task
+        /// Extra arguments: positional values, --variable value pairs for task templates, or #subtask selector
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },

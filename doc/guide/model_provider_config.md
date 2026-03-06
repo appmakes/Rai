@@ -187,25 +187,3 @@ rai profile create hard-task
 rai profile switch hard-task
 rai run "Review this code" --profile hard-task
 ```
-
-## Poe Integration (Phase 3)
-
-To use Poe:
-
-1. Get your API key from [Poe](https://poe.com/api_key).
-2. Configure Rai:
-   ```bash
-   rai config
-   # Enter 'poe' as provider
-   # Paste your API key
-   # Enter a model name (e.g., 'gpt-4o', 'claude-3-5-sonnet')
-   ```
-   Or set the environment variable:
-   ```bash
-   export POE_API_KEY=your_key_here
-   ```
-
-3. Run a task:
-   ```bash
-   rai run "Hello world"
-   ```
