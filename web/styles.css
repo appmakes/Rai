@@ -92,6 +92,7 @@ body {
   border-radius: 100px;
   padding: 4px;
   gap: 0;
+  max-width: 100%;
 }
 
 .toggle-group {
@@ -129,6 +130,8 @@ body {
   align-items: center;
   gap: 12px;
   padding: 8px 20px 8px 16px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .cmd-text {
@@ -136,6 +139,8 @@ body {
   font-size: 13px;
   color: var(--color-text);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .copy-btn {

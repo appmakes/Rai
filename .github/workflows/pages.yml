@@ -24,8 +24,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Copy docs into web directory
-        run: cp -r doc web/doc
+      - name: Copy user-facing docs into web directory
+        run: mkdir -p web/doc/guide && cp -r doc/guide/* web/doc/guide/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
