@@ -113,16 +113,16 @@ API keys are stored in `~/.local/share/rai/credentials` (mode 0600). Use `--keyr
 
 ## Documentation
 
-- [User Guide](doc/guide/user_guide.md) - setup, configuration, task files, and tools
-- [Model & Provider Config](doc/guide/model_provider_config.md) - provider setup and model selection
+- [Quick Start](doc/guide/quick_start.md) - installation and first run
+- [Task Files](doc/guide/task_files.md) - markdown runbooks, variables, and subtasks
+- [Tools & Permissions](doc/guide/tools_and_permissions.md) - built-in tools and permission system
+- [Providers & Models](doc/guide/providers_and_models.md) - provider setup and model selection
+- [Advanced Flags](doc/guide/advanced_flags.md) - CLI flags and options
 
 ### Development docs
 
 - [Architecture](doc/development/architecture.md)
 - [Agent Loop Design](doc/development/agent_loop_design.md)
-- [Security Design](doc/development/security_design.md)
-- [Implementation Plan](doc/development/implementation_plan.md)
-- [Product Requirements](doc/development/product_requirements.md)
 
 ## Development
 

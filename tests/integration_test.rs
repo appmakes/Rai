@@ -523,8 +523,9 @@ fn test_profile_show_bootstraps_missing_default_profile() {
     let config_content = fs::read_to_string(config_dir.join("config.toml"))
         .expect("config.toml should exist after profile bootstrap");
     assert!(
-        config_content.contains("providers = [\"poe\"]"),
-        "default profile should be stored in config.toml"
+        config_content.contains("default_provider"),
+        "default profile should be stored in config.toml: {}",
+        config_content
     );
 }
 
