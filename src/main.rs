@@ -14,6 +14,7 @@ mod agent;
 mod config;
 mod key_store;
 mod permission;
+mod provider_catalog;
 mod providers;
 mod task_parser;
 mod template;
@@ -197,7 +198,8 @@ enum ProfileCommands {
 }
 
 fn resolve_provider(config: &Config) -> anyhow::Result<Box<dyn Provider>> {
-    let provider = config.provider.trim().to_lowercase();
+    let provider = provider_catalog::normalize_provider_name(&config.provider)
+        .unwrap_or_else(|| config.provider.trim().to_ascii_lowercase());
     if provider.is_empty() {
         anyhow::bail!(
             "No provider configured for profile '{}'. Run `rai start` or `rai config`.",
@@ -205,9 +207,38 @@ fn resolve_provider(config: &Config) -> anyhow::Result<Box<dyn Provider>> {
         );
     }
 
+    let base_url = if config.provider_base_url.trim().is_empty() {
+        None
+    } else {
+        Some(config.provider_base_url.trim())
+    };
+
     match provider.as_str() {
         "poe" => Ok(Box::new(providers::poe::PoeProvider::new(&config.api_key))),
-        other => anyhow::bail!("Provider '{}' is not yet supported. Supported: poe", other),
+        "openai" => Ok(Box::new(providers::openai::OpenAiProvider::new(
+            &config.api_key,
+            base_url,
+        )?)),
+        "anthropic" => Ok(Box::new(providers::anthropic::AnthropicProvider::new(
+            &config.api_key,
+            base_url,
+        )?)),
+        "google" => Ok(Box::new(providers::google::GoogleProvider::new(
+            &config.api_key,
+            base_url,
+        )?)),
+        other if provider_catalog::provider_uses_openai_compatible_api(other) => Ok(Box::new(
+            providers::openai_compatible::OpenAiCompatibleProvider::new(
+                other,
+                &config.api_key,
+                base_url,
+            )?,
+        )),
+        other => anyhow::bail!(
+            "Provider '{}' is not supported. Supported: {}",
+            other,
+            provider_catalog::available_providers().join(", ")
+        ),
     }
 }
 
@@ -605,22 +636,31 @@ async fn handle_run(
     let mut config = Config::load(opts.profile_override)?;
     config.resolve_api_key(opts.use_keyring)?;
 
-    // If current provider has no key, use the first provider that has credentials (env or store)
-    if config.api_key.is_empty() {
+    // If current provider has no key, use the first provider that has credentials (env or store).
+    if config.api_key.is_empty() && provider_catalog::provider_requires_api_key(&config.provider) {
         for provider in available_providers() {
+            if !provider_catalog::provider_requires_api_key(provider) {
+                continue;
+            }
+            if provider_catalog::provider_supports_base_url(provider)
+                && provider_catalog::provider_default_base_url(provider).is_none()
+            {
+                continue;
+            }
             if let Some(key) = get_key_for_provider(&config.profile, provider, opts.use_keyring) {
                 config.provider = provider.to_string();
                 config.providers = vec![provider.to_string()];
                 config.default_provider = Some(provider.to_string());
+                config.provider_base_url.clear();
                 config.api_key = key;
                 break;
             }
         }
     }
 
-    if config.api_key.is_empty() {
+    if config.api_key.is_empty() && provider_catalog::provider_requires_api_key(&config.provider) {
         anyhow::bail!(
-            "No API key found. Set a provider-specific env var (e.g. POE_API_KEY), add a .env file, or run `rai config` to save a key (see --keyring for OS keyring)."
+            "No API key found. Set a provider-specific env var (e.g. POE_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY), add a .env file, or run `rai config` to save a key (see --keyring for OS keyring)."
         );
     }
 
@@ -1285,16 +1325,15 @@ fn set_profile_api_key(
     let store_name = if use_keyring { "keyring" } else { "credentials file" };
     set_api_key_helper(&scoped_provider, api_key, use_keyring)
         .with_context(|| format!("Failed to save profile-scoped API key to {}", store_name))?;
+    // Backward-compatible fallback key.
     let _ = set_api_key_helper(provider, api_key, use_keyring);
 
     // Verify read-back only for keyring (file store is trusted; keyring can have permission issues)
     #[cfg(not(test))]
-    if use_keyring {
-        if get_api_key_helper(&scoped_provider, use_keyring).is_err() {
-            anyhow::bail!(
-                "API key was not readable from keyring after save. Check OS keyring access permissions, or run without --keyring to use the credentials file instead."
-            );
-        }
+    if use_keyring && get_api_key_helper(&scoped_provider, use_keyring).is_err() {
+        anyhow::bail!(
+            "API key was not readable from keyring after save. Check OS keyring access permissions, or run without --keyring to use the credentials file instead."
+        );
     }
 
     Ok(())
@@ -1302,31 +1341,21 @@ fn set_profile_api_key(
 
 /// Returns the API key for a provider from env vars only (no keyring).
 fn get_key_for_provider_from_env(provider: &str) -> Option<String> {
-    let provider = provider.trim().to_lowercase();
-    let env_candidates: Vec<&str> = match provider.as_str() {
-        "openai" => vec!["OPENAI_API_KEY"],
-        "anthropic" | "claude" => vec!["ANTHROPIC_API_KEY"],
-        "gemini" | "google" => vec!["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-        "poe" => vec!["POE_API_KEY"],
-        _ => vec![],
-    };
+    let provider = provider_catalog::normalize_provider_name(provider)
+        .unwrap_or_else(|| provider.trim().to_ascii_lowercase());
 
-    for name in &env_candidates {
+    for name in provider_catalog::provider_env_vars(&provider) {
         if let Ok(v) = std::env::var(name) {
             if !v.trim().is_empty() {
                 return Some(v);
             }
         }
     }
-
-    if provider.is_empty() {
-        return None;
-    }
-    let generic_name = format!("{}_API_KEY", provider.to_uppercase());
-    std::env::var(generic_name).ok().filter(|v| !v.trim().is_empty())
+    None
 }
 
 /// Key source for provider selector labels.
+#[cfg_attr(test, allow(dead_code))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProviderKeySource {
     Env,
@@ -1398,7 +1427,57 @@ fn profile_provider_has_saved_key(_profile: &str, _provider: &str, _use_keyring:
 }
 
 fn available_providers() -> Vec<&'static str> {
-    vec!["poe", "openai", "anthropic", "google", "xai"]
+    provider_catalog::available_providers()
+}
+
+fn provider_requires_explicit_base_url(provider: &str) -> bool {
+    provider_catalog::provider_supports_base_url(provider)
+        && provider_catalog::provider_default_base_url(provider).is_none()
+}
+
+fn configure_provider_base_url(config: &mut Config, provider: &str) -> anyhow::Result<()> {
+    if !provider_catalog::provider_supports_base_url(provider) {
+        config.provider_base_url.clear();
+        return Ok(());
+    }
+
+    let default_base_url = provider_catalog::provider_default_base_url(provider).unwrap_or("");
+    let prompt = if provider_requires_explicit_base_url(provider) {
+        "Base URL (required, e.g. https://api.openai.com/v1)"
+    } else {
+        "Base URL (press Enter to accept default)"
+    };
+
+    let initial_value = if !config.provider_base_url.trim().is_empty() {
+        config.provider_base_url.clone()
+    } else {
+        default_base_url.to_string()
+    };
+
+    loop {
+        let input: String = Input::new()
+            .with_prompt(prompt)
+            .default(initial_value.clone())
+            .allow_empty(true)
+            .interact_text()?;
+        let trimmed = input.trim().to_string();
+
+        if trimmed.is_empty() && provider_requires_explicit_base_url(provider) {
+            println!(
+                "Provider '{}' requires an explicit base URL. Enter one or press Ctrl+C to cancel.",
+                provider
+            );
+            continue;
+        }
+
+        config.provider_base_url = trimmed;
+        if config.provider_base_url.is_empty() && !default_base_url.is_empty() {
+            println!("Using provider default base URL: {}", default_base_url);
+        }
+        break;
+    }
+
+    Ok(())
 }
 
 fn configure_provider_and_key(
@@ -1408,9 +1487,11 @@ fn configure_provider_and_key(
 ) -> anyhow::Result<()> {
     print_section("Provider");
     let providers = available_providers();
+    let active_provider = provider_catalog::normalize_provider_name(&config.provider)
+        .unwrap_or_else(|| config.provider.clone());
     let default_idx = providers
         .iter()
-        .position(|provider| *provider == config.provider)
+        .position(|provider| *provider == active_provider)
         .unwrap_or(0);
     let provider_labels: Vec<String> = providers
         .iter()
@@ -1427,7 +1508,10 @@ fn configure_provider_and_key(
     } else {
         "[configured] = key in credentials file (~/.local/share/rai/credentials)."
     };
-    println!("Hint: [read from env] = key from POE_API_KEY etc.; {}", store_hint);
+    println!(
+        "Hint: [read from env] = key from OPENAI_API_KEY/POE_API_KEY/etc.; {}",
+        store_hint
+    );
     let selection = Select::new()
         .with_prompt("Select provider")
         .items(&provider_labels)
@@ -1440,10 +1524,23 @@ fn configure_provider_and_key(
             return Ok(());
         }
     };
+    let provider = provider_catalog::normalize_provider_name(&provider).unwrap_or(provider);
 
+    if provider != active_provider {
+        config.provider_base_url.clear();
+    }
     config.provider = provider.clone();
     config.providers = vec![provider.clone()];
     config.default_provider = Some(provider.clone());
+    configure_provider_base_url(config, &provider)?;
+
+    let requires_key = provider_catalog::provider_requires_api_key(&provider);
+    if !requires_key {
+        println!(
+            "Provider '{}' can run without an API key. If your endpoint needs auth, enter a key below.",
+            provider
+        );
+    }
 
     let has_saved_key = profile_provider_has_saved_key(&config.profile, &provider, use_keyring);
     if use_keyring {
@@ -1456,7 +1553,7 @@ fn configure_provider_and_key(
         );
     }
     loop {
-        let key_prompt = if has_saved_key || !require_key {
+        let key_prompt = if has_saved_key || !require_key || !requires_key {
             "API key (leave empty to keep current value)"
         } else {
             "API key (required for setup)"
@@ -1474,7 +1571,7 @@ fn configure_provider_and_key(
             );
             break;
         }
-        if has_saved_key || !require_key {
+        if has_saved_key || !require_key || !requires_key {
             break;
         }
         println!(
@@ -1777,6 +1874,14 @@ fn handle_profile_command(
                     .unwrap_or("(none configured)")
             );
             println!("Default model: {}", config.default_model);
+            println!(
+                "Provider base URL: {}",
+                if config.provider_base_url.trim().is_empty() {
+                    "(provider default)"
+                } else {
+                    config.provider_base_url.as_str()
+                }
+            );
             println!("Tool mode: {}", config.tool_mode);
             println!("no_tools: {}", config.no_tools);
             println!("auto_approve: {}", config.auto_approve);
@@ -2148,9 +2253,9 @@ mod tests {
         apply_status_contract_prompt, apply_think_mode_prompt, compose_adhoc_prompt,
         derive_user_final_state, ensure_non_empty_piped_stdin, extract_thinking_blocks,
         parse_assistant_payload, parse_assistant_status, parse_shorthand_args, parse_task_cli_args,
-        print_and_validate_response, resolve_task_arguments, response_has_failure_language,
-        strip_internal_status_lines, AssistantStatus, Cli, PipedStdin, ResponseDirective,
-        UserFinalState,
+        print_and_validate_response, resolve_provider, resolve_task_arguments,
+        response_has_failure_language, strip_internal_status_lines, AssistantStatus, Cli, Config,
+        PipedStdin, ResponseDirective, UserFinalState,
     };
     use clap::Parser;
 
@@ -2402,5 +2507,50 @@ mod tests {
 
         let error = resolve_task_arguments(&global, &section, content, &raw, false).unwrap_err();
         assert!(error.to_string().contains("Unknown argument"));
+    }
+
+    fn provider_test_config(provider: &str, api_key: &str, base_url: &str) -> Config {
+        Config {
+            profile: "default".to_string(),
+            provider: provider.to_string(),
+            providers: vec![provider.to_string()],
+            default_provider: Some(provider.to_string()),
+            default_model: "gpt-4o".to_string(),
+            provider_base_url: base_url.to_string(),
+            tool_mode: "ask".to_string(),
+            no_tools: false,
+            auto_approve: false,
+            api_key: api_key.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_resolve_provider_accepts_ollama_without_api_key() {
+        let config = provider_test_config("ollama", "", "");
+        assert!(resolve_provider(&config).is_ok());
+    }
+
+    #[test]
+    fn test_resolve_provider_requires_base_url_for_openai_compatible() {
+        let config = provider_test_config("openai-compatible", "dummy-key", "");
+        let result = resolve_provider(&config);
+        assert!(result.is_err(), "base URL should be required");
+        let message = result
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(message.contains("requires a base URL"));
+    }
+
+    #[test]
+    fn test_resolve_provider_supports_anthropic_when_api_key_present() {
+        let config = provider_test_config("anthropic", "dummy-key", "");
+        assert!(resolve_provider(&config).is_ok());
+    }
+
+    #[test]
+    fn test_resolve_provider_supports_openai_when_api_key_present() {
+        let config = provider_test_config("openai", "dummy-key", "");
+        assert!(resolve_provider(&config).is_ok());
     }
 }

@@ -362,7 +362,7 @@ fn test_implicit_task_file_named_flags_reach_provider() {
             "--output",
             "target/xxx.rtf",
         ])
-        .env("RAI_API_KEY", "test-dummy")
+        .env("POE_API_KEY", "test-dummy")
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -382,7 +382,7 @@ fn test_implicit_task_file_named_flags_reach_provider() {
 fn test_implicit_task_file_named_flags_missing_required_arg() {
     let output = rai_bin()
         .args(["demo/convert-format.md", "--input", "demo/source.md"])
-        .env("RAI_API_KEY", "test")
+        .env("POE_API_KEY", "test")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -407,7 +407,7 @@ fn test_implicit_task_file_named_flags_unknown_argument() {
             "--destination",
             "target/other.rtf",
         ])
-        .env("RAI_API_KEY", "test")
+        .env("POE_API_KEY", "test")
         .output()
         .unwrap();
     assert!(!output.status.success());

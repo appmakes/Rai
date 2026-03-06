@@ -5,17 +5,14 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::provider_catalog;
+
 const DEFAULT_PROFILE_NAME: &str = "default";
 const DEFAULT_MODEL_NAME: &str = "gpt-4o";
 const DEFAULT_TOOL_MODE: &str = "ask";
 
 fn normalize_provider_name(provider: &str) -> Option<String> {
-    let normalized = provider.trim().to_lowercase();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
+    provider_catalog::normalize_provider_name(provider)
 }
 
 fn normalize_provider_list(providers: &[String]) -> Vec<String> {
@@ -134,6 +131,8 @@ struct ProfileConfigFile {
     #[serde(default)]
     default_model: String,
     #[serde(default)]
+    provider_base_url: String,
+    #[serde(default)]
     tool_mode: String,
     #[serde(default)]
     no_tools: bool,
@@ -147,6 +146,7 @@ impl ProfileConfigFile {
             || !self.providers.is_empty()
             || self.default_provider.is_some()
             || !self.default_model.trim().is_empty()
+            || !self.provider_base_url.trim().is_empty()
             || !self.tool_mode.trim().is_empty()
             || self.no_tools
             || self.auto_approve
@@ -168,6 +168,8 @@ struct CombinedConfigFile {
     #[serde(default)]
     default_model: String,
     #[serde(default)]
+    provider_base_url: String,
+    #[serde(default)]
     tool_mode: String,
     #[serde(default)]
     no_tools: bool,
@@ -184,6 +186,7 @@ impl CombinedConfigFile {
             providers: profile.providers.clone(),
             default_provider: profile.default_provider.clone(),
             default_model: profile.default_model.clone(),
+            provider_base_url: profile.provider_base_url.clone(),
             tool_mode: profile.tool_mode.clone(),
             no_tools: profile.no_tools,
             auto_approve: profile.auto_approve,
@@ -203,6 +206,7 @@ impl CombinedConfigFile {
             providers: self.providers.clone(),
             default_provider: self.default_provider.clone(),
             default_model: self.default_model.clone(),
+            provider_base_url: self.provider_base_url.clone(),
             tool_mode: self.tool_mode.clone(),
             no_tools: self.no_tools,
             auto_approve: self.auto_approve,
@@ -221,6 +225,8 @@ struct LegacyConfigFile {
     #[serde(default)]
     default_model: String,
     #[serde(default)]
+    provider_base_url: String,
+    #[serde(default)]
     tool_mode: String,
     #[serde(default)]
     no_tools: bool,
@@ -234,6 +240,7 @@ impl LegacyConfigFile {
             || !self.providers.is_empty()
             || self.default_provider.is_some()
             || !self.default_model.trim().is_empty()
+            || !self.provider_base_url.trim().is_empty()
             || !self.tool_mode.trim().is_empty()
             || self.no_tools
             || self.auto_approve
@@ -247,6 +254,7 @@ pub struct Config {
     pub providers: Vec<String>,
     pub default_provider: Option<String>,
     pub default_model: String,
+    pub provider_base_url: String,
     pub tool_mode: String,
     pub no_tools: bool,
     pub auto_approve: bool,
@@ -261,18 +269,18 @@ impl Config {
         let mut global = Self::load_global_config(&config_dir)?;
         Self::migrate_legacy_if_needed(&config_dir, &mut global)?;
 
-        let (mut requested_profile, explicit_profile_selection) = if let Some(profile) = profile_override
-        {
-            (validate_profile_name(profile)?, true)
-        } else if let Ok(profile) = env::var("RAI_PROFILE") {
-            if profile.trim().is_empty() {
-                (Self::resolve_profile_from_global(&global)?, false)
+        let (mut requested_profile, explicit_profile_selection) =
+            if let Some(profile) = profile_override {
+                (validate_profile_name(profile)?, true)
+            } else if let Ok(profile) = env::var("RAI_PROFILE") {
+                if profile.trim().is_empty() {
+                    (Self::resolve_profile_from_global(&global)?, false)
+                } else {
+                    (validate_profile_name(&profile)?, true)
+                }
             } else {
-                (validate_profile_name(&profile)?, true)
-            }
-        } else {
-            (Self::resolve_profile_from_global(&global)?, false)
-        };
+                (Self::resolve_profile_from_global(&global)?, false)
+            };
 
         if !explicit_profile_selection && !Self::profile_exists(&requested_profile)? {
             requested_profile = DEFAULT_PROFILE_NAME.to_string();
@@ -475,6 +483,7 @@ impl Config {
         if file.default_model.trim().is_empty() {
             file.default_model = DEFAULT_MODEL_NAME.to_string();
         }
+        file.provider_base_url = file.provider_base_url.trim().to_string();
         if file.tool_mode.trim().is_empty() {
             file.tool_mode = DEFAULT_TOOL_MODE.to_string();
         }
@@ -485,6 +494,7 @@ impl Config {
             providers: file.providers,
             default_provider: file.default_provider,
             default_model: file.default_model,
+            provider_base_url: file.provider_base_url,
             tool_mode: file.tool_mode,
             no_tools: file.no_tools,
             auto_approve: file.auto_approve,
@@ -498,6 +508,7 @@ impl Config {
             providers: self.providers.clone(),
             default_provider: self.default_provider.clone(),
             default_model: self.default_model.clone(),
+            provider_base_url: self.provider_base_url.clone(),
             tool_mode: self.tool_mode.clone(),
             no_tools: self.no_tools,
             auto_approve: self.auto_approve,
@@ -516,6 +527,7 @@ impl Config {
             providers: vec!["poe".to_string()],
             default_provider: Some("poe".to_string()),
             default_model: DEFAULT_MODEL_NAME.to_string(),
+            provider_base_url: String::new(),
             tool_mode: DEFAULT_TOOL_MODE.to_string(),
             no_tools: false,
             auto_approve: false,
@@ -523,7 +535,10 @@ impl Config {
         }
     }
 
-    fn ensure_default_profile_exists(config_dir: &Path, global: &mut GlobalConfigFile) -> Result<()> {
+    fn ensure_default_profile_exists(
+        config_dir: &Path,
+        global: &mut GlobalConfigFile,
+    ) -> Result<()> {
         let default_profile_path = Self::profile_config_path(config_dir, DEFAULT_PROFILE_NAME);
         if !default_profile_path.exists() || !Self::profile_exists(DEFAULT_PROFILE_NAME)? {
             let data = Self::default_profile_config();
@@ -573,6 +588,7 @@ impl Config {
             providers: legacy.providers,
             default_provider: legacy.default_provider,
             default_model: legacy.default_model,
+            provider_base_url: legacy.provider_base_url,
             tool_mode: legacy.tool_mode,
             no_tools: legacy.no_tools,
             auto_approve: legacy.auto_approve,
@@ -691,46 +707,32 @@ impl Config {
             return Ok(());
         }
 
+        let normalized_provider = normalize_provider_name(&self.provider)
+            .unwrap_or_else(|| self.provider.trim().to_ascii_lowercase());
+        self.provider = normalized_provider.clone();
+
         // 1. Check credentials store (file or keyring): profile-scoped then legacy provider scope.
         #[cfg(not(test))]
         {
-            let profile_scoped = format!("{}:{}", self.profile, self.provider);
+            let profile_scoped = format!("{}:{}", self.profile, normalized_provider);
             if let Ok(key) = crate::get_api_key_helper(&profile_scoped, use_keyring) {
                 self.api_key = key;
                 return Ok(());
             }
 
-            if let Ok(key) = crate::get_api_key_helper(&self.provider, use_keyring) {
+            if let Ok(key) = crate::get_api_key_helper(&normalized_provider, use_keyring) {
                 self.api_key = key;
                 return Ok(());
             }
         }
 
         // 2. Check provider-specific env vars (automation fallback).
-        let provider_key = self.provider.to_lowercase();
-        let env_candidates = match provider_key.as_str() {
-            "openai" => vec!["OPENAI_API_KEY"],
-            "anthropic" | "claude" => vec!["ANTHROPIC_API_KEY"],
-            "gemini" | "google" => vec!["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-            "poe" => vec!["POE_API_KEY"],
-            _ => vec![],
-        };
-
-        for env_var in env_candidates {
+        for env_var in provider_catalog::provider_env_vars(&normalized_provider) {
             if let Ok(key) = env::var(env_var) {
-                if !key.is_empty() {
+                if !key.trim().is_empty() {
                     self.api_key = key;
                     return Ok(());
                 }
-            }
-        }
-
-        // 3. Check Generic Provider Env Var (fallback logic)
-        let provider_env = format!("{}_API_KEY", self.provider.to_uppercase());
-        if let Ok(key) = env::var(&provider_env) {
-            if !key.is_empty() {
-                self.api_key = key;
-                return Ok(());
             }
         }
 

@@ -56,6 +56,10 @@ Flags (global unless noted):
 - Default profile config: `~/.config/rai/config.toml`
 - Non-default profile config: `~/.config/rai/config.<profile>.toml`
 - If no profile is explicitly selected, `rai` falls back to `default` and auto-creates it when missing
-- Supported provider today: `poe`
+- Supported providers:
+  - Native: `poe`, `openai`, `anthropic`, `google`
+  - OpenAI-compatible built-ins: `xai`, `openrouter`, `ollama`, `deepseek`, `minimax`, `kimi`, `zai`, `bedrock`
+  - Generic OpenAI-compatible: `openai-compatible` (configure `provider_base_url`)
+- `provider_base_url` can override endpoint base URL per profile (required for `openai-compatible`, optional for OpenAI-compatible built-ins)
 - API keys: by default stored in `~/.local/share/rai/credentials` (mode 0600). Use `--keyring` to store and read from the OS keyring instead.
-- API key lookup order: credentials store (file or keyring if `--keyring`), then provider env var (e.g. `POE_API_KEY`). A `.env` file in the current directory is loaded automatically.
+- API key lookup order: credentials store (file or keyring if `--keyring`), then provider env vars (e.g. `POE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`). A `.env` file in the current directory is loaded automatically.
