@@ -27,7 +27,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site/doc/guide
-          cp web/index.html web/styles.css web/docs.html web/install.sh _site/
+          cp web/index.html web/styles.css web/docs.html web/install.sh web/favicon.svg _site/
           cp -r web/images _site/images 2>/dev/null || true
           cp -r doc/guide/* _site/doc/guide/
 

@@ -1,67 +1,144 @@
-# rai
+<p align="center">
+  <img src="icon.svg" width="80" alt="rai icon">
+</p>
 
-> Run AI instructions directly from your terminal, scripts, and CI/CD pipelines.
+<h1 align="center">rai</h1>
 
-`rai` is a Rust CLI tool for running AI tasks from the terminal or CI.
+<p align="center">
+  Run AI instructions directly from your terminal, scripts, and CI/CD pipelines.
+</p>
 
-## Prerequisites
+<p align="center">
+  <a href="https://appmakes.github.io/Rai/">Website</a> &nbsp;&bull;&nbsp;
+  <a href="https://appmakes.github.io/Rai/docs.html">Documentation</a> &nbsp;&bull;&nbsp;
+  <a href="https://github.com/appmakes/Rai/releases">Releases</a>
+</p>
 
-- Rust toolchain (stable)
-- Optional (only if using `--keyring`): Linux packages for OS keyring support: `libdbus-1-dev`, `pkg-config`
+---
 
-## Build
+## Install
 
-- Debug build: `cargo build`
-- Release build: `cargo build --release`
+**macOS** (Homebrew):
 
-## Run
+```bash
+brew install rai
+```
 
-After building, run the binary from:
+**Linux / macOS** (shell script):
 
-- `cargo run -- --help`
-- `target/debug/rai` (debug)
-- `target/release/rai` (release)
+```bash
+curl -sSL https://appmakes.github.io/Rai/install.sh | sh
+```
 
-Common commands:
+**From source** (requires Rust toolchain):
 
-- `rai start` — first-time setup wizard
-- `rai run "Summarize this text"` — run an ad-hoc prompt
-- `rai run task.md` — run a task file
-- `rai run task.md --input foo --output bar` — run task file with named task args
-- `rai plan task.md` — preview task structure before execution
-(optional: `--subtask name`, trailing args)
-- `rai create task.md` — create a task file interactively
-- `rai config` — open configuration menu
-- `rai profile list` — list profiles
+```bash
+cargo install --path .
+```
 
-Flags (global unless noted):
+## Quick start
 
-- `-v, --verbose` — debugging (repeat to increase level)
-- `-m, --model <MODEL>` — override AI model (e.g. `gpt-4o`, `kimi-k2`)
-- `--profile <NAME>` — select configuration profile
-- `--keyring` — use OS keyring for API keys (default: credentials file at `~/.local/share/rai/credentials`, mode 0600)
-- `-y, --yes` — auto-approve all tool calls
-- `--no-tools` — disable tool calling (single-turn only)
-- `-s, --silent` — do not ask for follow-up input
-- `--bill` — print API and token usage summary
-- `--detail` — show detailed runtime logs (tool calls, prompts, responses)
-- `--think` — ask provider to show thinking chain
+**1. First-time setup:**
 
-## Test and lint
+```bash
+rai start
+```
 
-- Run tests: `cargo test`
-- Run lints: `cargo clippy`
+Pick a provider, enter your API key, and choose a default model.
 
-## Configuration notes
+**2. Run a prompt:**
 
-- Global config: `~/.config/rai/config.toml`
-- Default profile config: `~/.config/rai/config.toml`
-- Non-default profile config: `~/.config/rai/config.<profile>.toml`
-- If no profile is explicitly selected, `rai` falls back to `default` and auto-creates it when missing
-- Supported providers:
-  - Native: `poe`, `openai`, `anthropic`, `google`
-  - OpenAI-compatible built-ins: `xai`, `openrouter`, `ollama`, `deepseek`, `minimax`, `kimi`, `zai`, `bedrock`
-  - Generic OpenAI-compatible: `openai-compatible` (configure `provider_base_url`)
-- `provider_base_url` can override endpoint base URL per profile (required for `openai-compatible`, optional for OpenAI-compatible built-ins)
-- API keys: by default stored in `~/.local/share/rai/credentials` (mode 0600). Use `--keyring` to store and read from the OS keyring instead.
-- API key lookup order: credentials store (file or keyring if `--keyring`), then provider env vars (e.g. `POE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`). A `.env` file in the current directory is loaded automatically.
+```bash
+rai "whois github.com"
+```
+
+**3. Pipe input:**
+
+```bash
+ls -a | rai "count all file size"
+```
+
+**4. Run a task file:**
+
+```bash
+rai run task.md
+```
+
+**5. Auto-approve tool calls:**
+
+```bash
+rai --yes "Clean up feature flags.md"
+```
+
+## Usage
+
+```
+rai [OPTIONS] <PROMPT|FILE>
+```
+
+| Command | Description |
+|---------|-------------|
+| `rai "prompt"` | Run an ad-hoc prompt |
+| `rai run task.md` | Run a task file |
+| `rai plan task.md` | Preview task structure before execution |
+| `rai create task.md` | Create a task file interactively |
+| `rai start` | First-time setup wizard |
+| `rai config` | Open configuration menu |
+| `rai profile list` | List configuration profiles |
+
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Auto-approve all tool calls |
+| `-m, --model <MODEL>` | Override AI model (e.g. `gpt-4o`, `kimi-k2`) |
+| `--profile <NAME>` | Select configuration profile |
+| `-s, --silent` | No follow-up input |
+| `--no-tools` | Disable tool calling |
+| `--bill` | Print API and token usage summary |
+| `--detail` | Show detailed runtime logs |
+| `--think` | Ask provider to show thinking chain |
+| `-v, --verbose` | Debug logging |
+
+## Configuration
+
+Config files live in `~/.config/rai/`:
+
+| File | Purpose |
+|------|---------|
+| `config.toml` | Default profile config |
+| `config.<profile>.toml` | Named profile config |
+
+API keys are stored in `~/.local/share/rai/credentials` (mode 0600). Use `--keyring` to store in the OS keyring instead.
+
+**Supported providers:** OpenAI, Anthropic, Google, Poe, xAI, OpenRouter, Ollama, DeepSeek, MiniMax, Kimi, ZAI, Bedrock, and any OpenAI-compatible endpoint.
+
+## Documentation
+
+- [User Guide](doc/guide/user_guide.md) - setup, configuration, task files, and tools
+- [Model & Provider Config](doc/guide/model_provider_config.md) - provider setup and model selection
+
+### Development docs
+
+- [Architecture](doc/development/architecture.md)
+- [Agent Loop Design](doc/development/agent_loop_design.md)
+- [Security Design](doc/development/security_design.md)
+- [Implementation Plan](doc/development/implementation_plan.md)
+- [Product Requirements](doc/development/product_requirements.md)
+
+## Development
+
+```bash
+# Build
+cargo build
+
+# Run tests
+cargo test
+
+# Lint
+cargo clippy
+```
+
+> **Note:** On Linux, if using `--keyring`, install: `libdbus-1-dev`, `pkg-config`
+
+## License
+
+See [LICENSE](LICENSE) for details.
