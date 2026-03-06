@@ -51,15 +51,16 @@
       // Update title
       document.title = `Rai — ${doc.title}`;
 
-      // Fetch and render
+      // Fetch and render — try deployed path first, then local dev path
       content.innerHTML = '<p class="docs-loading">Loading...</p>';
       try {
-        const res = await fetch(doc.file);
+        let res = await fetch(doc.file);
+        if (!res.ok) res = await fetch('../' + doc.file);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const md = await res.text();
         content.innerHTML = marked.parse(md);
       } catch (e) {
-        content.innerHTML = `<p class="docs-loading">Failed to load ${doc.title}. Make sure you're viewing this on the deployed site.</p>`;
+        content.innerHTML = `<p class="docs-loading">Failed to load ${doc.title}.</p>`;
       }
     }
 

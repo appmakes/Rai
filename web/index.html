@@ -33,7 +33,7 @@
           <span class="title-text">Rai</span>
         </div>
 
-        <p class="tagline">Run AI instructions directly from your terminal, scripts, and CI/CD pipelines.</p>
+        <p class="tagline"><strong>R</strong>un <strong>A</strong>I <strong>I</strong>nstructions directly from your terminal, scripts, and CI/CD pipelines.</p>
 
         <div class="install-widget">
           <div class="toggle-group">
@@ -90,12 +90,12 @@
             <div class="item-title">In your scripts</div>
             <p class="item-body">Supercharge your project workflows with AI-powered scripts.</p>
             <div class="code-block">
-              <code class="code-line">{</code>
-              <code class="code-line">  "scripts": {</code>
-              <code class="code-line">    "test": "npm run test",</code>
-              <code class="code-line code-highlight">    "check": "rai rules-check.md &amp; rai security.md"</code>
-              <code class="code-line">  }</code>
-              <code class="code-line">}</code>
+              <code class="code-line code-muted">{</code>
+              <code class="code-line code-muted">  "scripts": {</code>
+              <code class="code-line code-muted">    "test": "npm run test",</code>
+              <code class="code-line code-added">    "check": "rai rules-check.md &amp; rai security.md"</code>
+              <code class="code-line code-muted">  }</code>
+              <code class="code-line code-muted">}</code>
             </div>
           </div>
         </div>
@@ -110,11 +110,11 @@
             <div class="item-title">In CI/CD</div>
             <p class="item-body">Drop any AI steps into your build pipeline.</p>
             <div class="code-block">
-              <code class="code-line">steps:</code>
-              <code class="code-line">  - run: npm install</code>
-              <code class="code-line">  - run: npm run build</code>
-              <code class="code-line code-highlight">  - run: rai translate.md</code>
-              <code class="code-line">  - run: npm run deploy</code>
+              <code class="code-line code-muted">steps:</code>
+              <code class="code-line code-muted">  - run: npm install</code>
+              <code class="code-line code-muted">  - run: npm run build</code>
+              <code class="code-line code-added">  - run: rai translate.md</code>
+              <code class="code-line code-muted">  - run: npm run deploy</code>
             </div>
           </div>
         </div>

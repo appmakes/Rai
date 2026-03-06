@@ -24,8 +24,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Copy user-facing docs into web directory
-        run: mkdir -p web/doc/guide && cp -r doc/guide/* web/doc/guide/
+      - name: Assemble site
+        run: |
+          mkdir -p _site/doc/guide
+          cp web/index.html web/styles.css web/docs.html web/install.sh _site/
+          cp -r web/images _site/images 2>/dev/null || true
+          cp -r doc/guide/* _site/doc/guide/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -33,7 +37,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: web
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment

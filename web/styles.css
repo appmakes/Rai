@@ -84,6 +84,11 @@ body {
   line-height: 1.6;
 }
 
+.tagline strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
 /* === Install Widget === */
 .install-widget {
   display: inline-flex;
@@ -243,11 +248,16 @@ body {
   color: var(--color-secondary);
 }
 
-.code-highlight {
+.code-added {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--color-text);
   font-weight: 500;
+  margin: 0 -20px;
+  padding: 2px 20px;
+  border-left: 3px solid rgba(34, 197, 94, 0.6);
 }
 
-.code-comment {
+.code-muted {
   color: var(--color-muted);
 }
 
