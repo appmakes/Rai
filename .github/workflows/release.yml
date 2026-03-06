@@ -77,6 +77,42 @@ jobs:
           tar czf ../../../rai-${{ matrix.target }}.tar.gz rai
           cd ../../..
 
+      - name: Package .deb (Linux x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          mkdir -p dpkg/usr/local/bin dpkg/DEBIAN
+          cp target/${{ matrix.target }}/release/rai dpkg/usr/local/bin/
+          chmod 755 dpkg/usr/local/bin/rai
+          VERSION=${GITHUB_REF_NAME#v}
+          cat > dpkg/DEBIAN/control <<CTRL
+          Package: rai
+          Version: ${VERSION}
+          Architecture: amd64
+          Maintainer: appmakes.io
+          Description: Run AI instructions from your terminal
+          Homepage: https://appmakes.github.io/Rai/
+          CTRL
+          sed -i 's/^          //' dpkg/DEBIAN/control
+          dpkg-deb --build dpkg rai_${VERSION}_amd64.deb
+
+      - name: Package .deb (Linux aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p dpkg/usr/local/bin dpkg/DEBIAN
+          cp target/${{ matrix.target }}/release/rai dpkg/usr/local/bin/
+          chmod 755 dpkg/usr/local/bin/rai
+          VERSION=${GITHUB_REF_NAME#v}
+          cat > dpkg/DEBIAN/control <<CTRL
+          Package: rai
+          Version: ${VERSION}
+          Architecture: arm64
+          Maintainer: appmakes.io
+          Description: Run AI instructions from your terminal
+          Homepage: https://appmakes.github.io/Rai/
+          CTRL
+          sed -i 's/^          //' dpkg/DEBIAN/control
+          dpkg-deb --build dpkg rai_${VERSION}_arm64.deb
+
       - name: Package (Windows)
         if: matrix.archive == 'zip'
         shell: pwsh
@@ -87,7 +123,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rai-${{ matrix.target }}
-          path: rai-${{ matrix.target }}.${{ matrix.archive }}
+          path: |
+            rai-${{ matrix.target }}.${{ matrix.archive }}
+            rai_*_*.deb
 
   release:
     name: Create Release
@@ -107,7 +145,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec sh -c 'sha256sum "$1" >> ../checksums.txt' _ {} \;
+          find . -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' \) -exec sh -c 'sha256sum "$1" >> ../checksums.txt' _ {} \;
           cd ..
           cat checksums.txt
 
@@ -118,4 +156,5 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
+            artifacts/**/*.deb
             checksums.txt

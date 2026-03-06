@@ -1,0 +1,14 @@
+PackageIdentifier: appmakes.rai
+PackageVersion: 1.0.0
+PackageName: rai
+Publisher: appmakes.io
+License: MIT
+ShortDescription: Run AI instructions directly from your terminal
+PackageUrl: https://appmakes.github.io/Rai/
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/appmakes/Rai/releases/download/v1.0.0/rai-x86_64-pc-windows-msvc.zip
+    InstallerType: zip
+    # InstallerSha256: PLACEHOLDER  # Update after release build completes
+ManifestType: singleton
+ManifestVersion: 1.6.0
