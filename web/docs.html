@@ -20,8 +20,11 @@
       </a>
       <div class="docs-nav-title">Documentation</div>
       <ul class="docs-nav-list">
-        <li><a href="#user_guide" class="doc-link active" data-doc="user_guide">User Guide</a></li>
-        <li><a href="#model_provider_config" class="doc-link" data-doc="model_provider_config">Model &amp; Provider Config</a></li>
+        <li><a href="#quick_start" class="doc-link active" data-doc="quick_start">Quick Start</a></li>
+        <li><a href="#providers_and_models" class="doc-link" data-doc="providers_and_models">Providers &amp; Models</a></li>
+        <li><a href="#tools_and_permissions" class="doc-link" data-doc="tools_and_permissions">Tools &amp; Permissions</a></li>
+        <li><a href="#task_files" class="doc-link" data-doc="task_files">Task Files</a></li>
+        <li><a href="#advanced_flags" class="doc-link" data-doc="advanced_flags">Advanced Flags</a></li>
       </ul>
       <div class="docs-theme-switch">
         <div class="theme-switch" id="theme-switch">
@@ -45,8 +48,11 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
     const docs = {
-      user_guide: { file: 'doc/guide/user_guide.md', title: 'User Guide' },
-      model_provider_config: { file: 'doc/guide/model_provider_config.md', title: 'Model & Provider Config' }
+      quick_start: { file: 'doc/guide/quick_start.md', title: 'Quick Start' },
+      providers_and_models: { file: 'doc/guide/providers_and_models.md', title: 'Providers & Models' },
+      tools_and_permissions: { file: 'doc/guide/tools_and_permissions.md', title: 'Tools & Permissions' },
+      task_files: { file: 'doc/guide/task_files.md', title: 'Task Files' },
+      advanced_flags: { file: 'doc/guide/advanced_flags.md', title: 'Advanced Flags' }
     };
 
     const content = document.getElementById('docs-content');
@@ -79,7 +85,7 @@
 
     // Handle hash navigation
     function onHashChange() {
-      const hash = location.hash.slice(1) || 'user_guide';
+      const hash = location.hash.slice(1) || 'quick_start';
       loadDoc(hash);
     }
 
