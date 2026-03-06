@@ -1,3 +1,4 @@
+pub mod ask;
 pub mod file_append;
 pub mod file_edit;
 pub mod file_read;
@@ -64,6 +65,7 @@ pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
         Box::new(web_fetch::WebFetchTool),
         Box::new(web_search::WebSearchTool),
         Box::new(git_operations::GitOperationsTool),
+        Box::new(ask::AskTool),
     ]
 }
 
@@ -109,6 +111,7 @@ mod tests {
             "web_fetch",
             "web_search",
             "git_operations",
+            "ask",
         ] {
             assert!(
                 names.iter().any(|name| name == expected),

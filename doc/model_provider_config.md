@@ -33,7 +33,7 @@ rai start
 
 This guides you through:
 1. **AI Provider**: e.g., `poe`, `openai`.
-2. **API Key**: Securely stored in local credential storage (OS keyring or credential-file backend).
+2. **API Key**: Stored in `~/.local/share/rai/credentials` (mode 0600) by default, or in the OS keyring if you pass `--keyring`.
 3. **Default Model**: e.g., `gpt-4o`, `claude-3-opus`.
 
 For advanced changes, use the config hub:
@@ -88,8 +88,8 @@ Rai automatically detects keys from standard environment variables used by other
 | **OpenAI-compatible** | `RAI_OPENAI_COMPAT_API_KEY`, `OPENAI_COMPAT_API_KEY` |
 
 API key resolution order:
-1. Provider-specific environment variable(s)
-2. Local credential storage (profile-scoped first, then provider-level fallback; backend can be OS keyring or credential file)
+1. Local credential storage (profile-scoped first, then provider-level fallback; backend can be OS keyring or credentials file)
+2. Provider-specific environment variable(s)
 
 ## OpenAI-compatible Generic Provider
 

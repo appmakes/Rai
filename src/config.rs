@@ -701,37 +701,38 @@ impl Config {
         Ok(proj_dirs.config_dir().to_path_buf())
     }
 
-    // Helper to resolve API key from env -> keyring
-    pub fn resolve_api_key(&mut self) -> Result<()> {
+    // Helper to resolve API key from store (file or keyring) -> Provider Env
+    pub fn resolve_api_key(&mut self, use_keyring: bool) -> Result<()> {
         if self.provider.trim().is_empty() {
             return Ok(());
         }
 
         let normalized_provider = normalize_provider_name(&self.provider)
             .unwrap_or_else(|| self.provider.trim().to_ascii_lowercase());
+        self.provider = normalized_provider.clone();
 
-        // 1. Provider-specific env vars.
+        // 1. Check credentials store (file or keyring): profile-scoped then legacy provider scope.
+        #[cfg(not(test))]
+        {
+            let profile_scoped = format!("{}:{}", self.profile, normalized_provider);
+            if let Ok(key) = crate::get_api_key_helper(&profile_scoped, use_keyring) {
+                self.api_key = key;
+                return Ok(());
+            }
+
+            if let Ok(key) = crate::get_api_key_helper(&normalized_provider, use_keyring) {
+                self.api_key = key;
+                return Ok(());
+            }
+        }
+
+        // 2. Check provider-specific env vars (automation fallback).
         for env_var in provider_catalog::provider_env_vars(&normalized_provider) {
             if let Ok(key) = env::var(env_var) {
                 if !key.trim().is_empty() {
                     self.api_key = key;
                     return Ok(());
                 }
-            }
-        }
-
-        // 2. Keyring fallback (profile-scoped first, then provider-level fallback).
-        #[cfg(not(test))]
-        {
-            let profile_scoped = format!("{}:{}", self.profile, normalized_provider);
-            if let Ok(key) = crate::get_api_key_helper(&profile_scoped) {
-                self.api_key = key;
-                return Ok(());
-            }
-
-            if let Ok(key) = crate::get_api_key_helper(&normalized_provider) {
-                self.api_key = key;
-                return Ok(());
             }
         }
 
