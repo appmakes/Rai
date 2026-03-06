@@ -64,6 +64,7 @@ body {
   flex-shrink: 0;
   cursor: default;
   margin-left: -6px;
+  margin-top:36px;
 }
 
 .avatar svg {
@@ -98,6 +99,30 @@ body {
 .rai-letter {
   font-family: 'Georgia', 'Times New Roman', serif;
   color: var(--color-text);
+}
+
+/* === Section Divider === */
+.section-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.section-divider::before,
+.section-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-divider);
+}
+
+.divider-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
 }
 
 /* === Install Widget === */
