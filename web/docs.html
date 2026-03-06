@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rai — Documentation</title>
+  <link rel="icon" type="image/svg+xml" href="../icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="docs-page">
+    <nav class="docs-sidebar">
+      <a href="index.html" class="docs-back">
+        <!-- Lucide: arrow-left -->
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+        Back
+      </a>
+      <div class="docs-nav-title">Documentation</div>
+      <ul class="docs-nav-list">
+        <li><a href="#user_guide" class="doc-link active" data-doc="user_guide">User Guide</a></li>
+        <li><a href="#architecture" class="doc-link" data-doc="architecture">Architecture</a></li>
+        <li><a href="#product_requirements" class="doc-link" data-doc="product_requirements">Product Requirements</a></li>
+        <li><a href="#implementation_plan" class="doc-link" data-doc="implementation_plan">Implementation Plan</a></li>
+        <li><a href="#model_provider_config" class="doc-link" data-doc="model_provider_config">Model &amp; Provider Config</a></li>
+        <li><a href="#security_design" class="doc-link" data-doc="security_design">Security Design</a></li>
+        <li><a href="#agent_loop_design" class="doc-link" data-doc="agent_loop_design">Agent Loop Design</a></li>
+        <li><a href="#rfc_start_config_profiles_tui" class="doc-link" data-doc="rfc_start_config_profiles_tui">RFC: Start &amp; Profiles</a></li>
+        <li><a href="#template_task" class="doc-link" data-doc="template_task">Template Task</a></li>
+      </ul>
+    </nav>
+    <main class="docs-content" id="docs-content">
+      <p class="docs-loading">Loading documentation...</p>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    const docs = {
+      user_guide: { file: 'doc/user_guide.md', title: 'User Guide' },
+      architecture: { file: 'doc/architecture.md', title: 'Architecture' },
+      product_requirements: { file: 'doc/product_requirements.md', title: 'Product Requirements' },
+      implementation_plan: { file: 'doc/implementation_plan.md', title: 'Implementation Plan' },
+      model_provider_config: { file: 'doc/model_provider_config.md', title: 'Model & Provider Config' },
+      security_design: { file: 'doc/security_design.md', title: 'Security Design' },
+      agent_loop_design: { file: 'doc/agent_loop_design.md', title: 'Agent Loop Design' },
+      rfc_start_config_profiles_tui: { file: 'doc/rfc_start_config_profiles_tui.md', title: 'RFC: Start & Profiles' },
+      template_task: { file: 'doc/template_task.md', title: 'Template Task' }
+    };
+
+    const content = document.getElementById('docs-content');
+    const links = document.querySelectorAll('.doc-link');
+
+    async function loadDoc(key) {
+      const doc = docs[key];
+      if (!doc) return;
+
+      // Update active link
+      links.forEach(l => l.classList.remove('active'));
+      const activeLink = document.querySelector(`[data-doc="${key}"]`);
+      if (activeLink) activeLink.classList.add('active');
+
+      // Update title
+      document.title = `Rai — ${doc.title}`;
+
+      // Fetch and render
+      content.innerHTML = '<p class="docs-loading">Loading...</p>';
+      try {
+        const res = await fetch(doc.file);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const md = await res.text();
+        content.innerHTML = marked.parse(md);
+      } catch (e) {
+        content.innerHTML = `<p class="docs-loading">Failed to load ${doc.title}. Make sure you're viewing this on the deployed site.</p>`;
+      }
+    }
+
+    // Handle hash navigation
+    function onHashChange() {
+      const hash = location.hash.slice(1) || 'user_guide';
+      loadDoc(hash);
+    }
+
+    window.addEventListener('hashchange', onHashChange);
+
+    // Handle link clicks
+    links.forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const key = link.dataset.doc;
+        history.pushState(null, '', `#${key}`);
+        loadDoc(key);
+      });
+    });
+
+    // Initial load
+    onHashChange();
+  </script>
+</body>
+</html>

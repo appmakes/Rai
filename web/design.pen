@@ -1,0 +1,667 @@
+{
+  "version": "2.8",
+  "children": [
+    {
+      "type": "frame",
+      "id": "Qpn6b",
+      "x": 0,
+      "y": 0,
+      "name": "Rai Homepage",
+      "width": 900,
+      "fill": "#FFFFFF",
+      "layout": "vertical",
+      "padding": [
+        80,
+        110
+      ],
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "5wQT6",
+          "name": "Main Content",
+          "width": 680,
+          "layout": "vertical",
+          "gap": 48,
+          "children": [
+            {
+              "type": "frame",
+              "id": "fTSCH",
+              "name": "Header",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "DtT8P",
+                  "name": "Brand Lockup",
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "F98eo",
+                      "name": "avatar",
+                      "width": 48,
+                      "height": 48,
+                      "fill": "#F6F6F6",
+                      "cornerRadius": 24,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "qdfs2",
+                          "name": "avatarLetter",
+                          "fill": "#1A1A1A",
+                          "content": "R",
+                          "fontFamily": "Inter",
+                          "fontSize": 20,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "x5Gjs",
+                      "name": "titleText",
+                      "fill": "#1A1A1A",
+                      "content": "Rai",
+                      "fontFamily": "Inter",
+                      "fontSize": 28,
+                      "fontWeight": "600",
+                      "letterSpacing": -0.5
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "Eng36",
+                  "name": "tagline",
+                  "fill": "#737373",
+                  "textGrowth": "fixed-width",
+                  "width": 480,
+                  "content": "Run AI Instructions directly from your terminal, scripts, and CI/CD pipelines. ",
+                  "lineHeight": 1.6,
+                  "fontFamily": "Inter",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "AjVNA",
+                  "name": "Install Widget",
+                  "fill": "#F6F6F6",
+                  "cornerRadius": 100,
+                  "padding": 4,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "3uLcm",
+                      "name": "Toggle Group",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Jd1E1",
+                          "name": "btnActive",
+                          "fill": "#FFFFFF",
+                          "cornerRadius": 100,
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "outer",
+                            "color": "#0000000A",
+                            "offset": {
+                              "x": 0,
+                              "y": 2
+                            },
+                            "blur": 8
+                          },
+                          "padding": [
+                            8,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "GUsW7",
+                              "name": "btnActiveText",
+                              "fill": "#1A1A1A",
+                              "content": "macOS",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "U6kiz",
+                          "name": "btnInactive",
+                          "cornerRadius": 100,
+                          "padding": [
+                            8,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "KBvjS",
+                              "name": "btnInactiveText",
+                              "fill": "#737373",
+                              "content": "Linux",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "1rkHy",
+                      "name": "divider",
+                      "fill": "#0000000F",
+                      "width": 1,
+                      "height": 20
+                    },
+                    {
+                      "type": "frame",
+                      "id": "IJjBM",
+                      "name": "cmdDisplay",
+                      "gap": 12,
+                      "padding": [
+                        8,
+                        20,
+                        8,
+                        16
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "kLqR2",
+                          "name": "cmdText",
+                          "fill": "#1A1A1A",
+                          "content": "brew install rai",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon_font",
+                          "id": "k0o8z",
+                          "name": "copyIcon",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "copy",
+                          "iconFontFamily": "lucide",
+                          "fill": "#A3A3A3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "8ORNA",
+              "name": "Feed List",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 40,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "wVm2c",
+                  "name": "Feed Item 1",
+                  "width": "fill_container",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "CgbFc",
+                      "name": "icon1",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "#F6F6F6",
+                      "cornerRadius": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "z0fdv",
+                          "name": "icon1Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "iconFontName": "terminal",
+                          "iconFontFamily": "lucide",
+                          "fill": "#1A1A1A"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "KwjXP",
+                      "name": "Item Content",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "FDCL9",
+                          "name": "header1",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "QAh8J",
+                              "name": "title1",
+                              "fill": "#1A1A1A",
+                              "content": "In your terminal",
+                              "fontFamily": "Inter",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "vcxZj",
+                          "name": "body1",
+                          "fill": "#737373",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Run AI in your shell — pipe and chain it like any Unix tool, from quick one-liners to structured markdown runbooks.",
+                          "lineHeight": 1.5,
+                          "fontFamily": "Inter",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "C6zre",
+                          "name": "Code Block",
+                          "width": "fill_container",
+                          "fill": "#F6F6F6",
+                          "cornerRadius": 16,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#00000008"
+                          },
+                          "layout": "vertical",
+                          "gap": 8,
+                          "padding": 20,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "BqAQ7",
+                              "name": "code1L1",
+                              "fill": "#1A1A1A",
+                              "content": "$ ls -a | rai \"count all file size\"",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "6Vry3",
+                              "name": "code1L2",
+                              "fill": "#737373",
+                              "content": "Total: 42 files, 1.2 MB combined",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "cLOn1",
+                  "name": "Feed Item 2",
+                  "width": "fill_container",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Vuc6j",
+                      "name": "icon2",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "#F6F6F6",
+                      "cornerRadius": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "GS970",
+                          "name": "icon2Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "iconFontName": "braces",
+                          "iconFontFamily": "lucide",
+                          "fill": "#1A1A1A"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "RGEN8",
+                      "name": "Item Content",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "APtr5",
+                          "name": "header2",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "1bWoq",
+                              "name": "title2",
+                              "fill": "#1A1A1A",
+                              "content": "In your scripts",
+                              "fontFamily": "Inter",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "3KsYQ",
+                          "name": "body2",
+                          "fill": "#737373",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Supercharge your project workflows with AI-powered scripts.",
+                          "lineHeight": 1.5,
+                          "fontFamily": "Inter",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "z2KCH",
+                          "name": "Code Block",
+                          "width": "fill_container",
+                          "fill": "#F6F6F6",
+                          "cornerRadius": 16,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#00000008"
+                          },
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 20,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "AWZiR",
+                              "name": "c2L1",
+                              "fill": "#1A1A1A",
+                              "content": "{",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "MWQIF",
+                              "name": "c2L2",
+                              "fill": "#1A1A1A",
+                              "content": "  \"scripts\": {",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "CxJW9",
+                              "name": "c2L3",
+                              "fill": "#A3A3A3",
+                              "content": "    \"test\": \"npm run test\",",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "tabYy",
+                              "name": "c2L4",
+                              "fill": "#1A1A1A",
+                              "content": "    \"check\": \"rai rules-check.md & rai security.md\"",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "500"
+                            },
+                            {
+                              "type": "text",
+                              "id": "vG0SC",
+                              "name": "c2L5",
+                              "fill": "#1A1A1A",
+                              "content": "  }",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ABtiD",
+                              "name": "c2L6",
+                              "fill": "#1A1A1A",
+                              "content": "}",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "RjFRe",
+                  "name": "Feed Item 3",
+                  "width": "fill_container",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "p9oP0",
+                      "name": "icon3",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "#F6F6F6",
+                      "cornerRadius": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "ihosK",
+                          "name": "icon3Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "iconFontName": "git-branch",
+                          "iconFontFamily": "lucide",
+                          "fill": "#1A1A1A"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "QACZu",
+                      "name": "Item Content",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "3ZQgb",
+                          "name": "header3",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "wCltC",
+                              "name": "title3",
+                              "fill": "#1A1A1A",
+                              "content": "In CI/CD",
+                              "fontFamily": "Inter",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "rRHkT",
+                          "name": "body3",
+                          "fill": "#737373",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Drop any AI steps into your build pipeline.",
+                          "lineHeight": 1.5,
+                          "fontFamily": "Inter",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "aimi4",
+                          "name": "Code Block",
+                          "width": "fill_container",
+                          "fill": "#F6F6F6",
+                          "cornerRadius": 16,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#00000008"
+                          },
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 20,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "IQgr9",
+                              "name": "c3L1",
+                              "fill": "#1A1A1A",
+                              "content": "steps:",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "O4kD5",
+                              "name": "c3L2",
+                              "fill": "#A3A3A3",
+                              "content": "  - run: npm install",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "TkxjI",
+                              "name": "c3L3",
+                              "fill": "#A3A3A3",
+                              "content": "  - run: npm run build",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "8sWDf",
+                              "name": "c3L4",
+                              "fill": "#1A1A1A",
+                              "content": "  - run: rai translate.md",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "500"
+                            },
+                            {
+                              "type": "text",
+                              "id": "G0p3P",
+                              "name": "c3L5",
+                              "fill": "#A3A3A3",
+                              "content": "  - run: npm run deploy",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "jpaQg",
+              "name": "Footer Button",
+              "cornerRadius": 8,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#0000001A"
+              },
+              "gap": 8,
+              "padding": [
+                10,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon_font",
+                  "id": "RUcyA",
+                  "name": "footerIcon",
+                  "width": 18,
+                  "height": 18,
+                  "iconFontName": "github",
+                  "iconFontFamily": "lucide",
+                  "fill": "#737373"
+                },
+                {
+                  "type": "text",
+                  "id": "pEzjA",
+                  "name": "footerText",
+                  "fill": "#737373",
+                  "content": "View on GitHub",
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "500"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

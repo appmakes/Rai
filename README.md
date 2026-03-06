@@ -1,5 +1,7 @@
 # rai
 
+> Run AI instructions directly from your terminal, scripts, and CI/CD pipelines.
+
 `rai` is a Rust CLI tool for running AI tasks from the terminal or CI.
 
 ## Prerequisites
