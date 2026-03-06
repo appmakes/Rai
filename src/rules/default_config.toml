@@ -1,0 +1,56 @@
+# Rai default profile configuration
+# Compiled into the binary — used as baseline when creating new profiles.
+# Edit this file to change the defaults for all new installations.
+
+provider = ""
+providers = []
+default_provider = "openai"
+default_model = "gpt-4o"
+provider_base_url = ""
+
+# Global tool mode: "ask" | "ask_once" | "allow" | "deny"
+tool_mode = "ask"
+no_tools = false
+auto_approve = false
+
+# Per-tool permission overrides.
+#
+# Each tool maps to a permission value. Two formats:
+#
+#   String   "allow", "ask", "ask_once", "deny"
+#   Table    { mode = "ask", blacklist = [".."], whitelist = [".."] }
+#
+# Table fields (all optional):
+#   mode      — fallback permission when no pattern matches ("allow", "ask", "ask_once", "deny")
+#               if omitted, the tool's default permission is used.
+#   blacklist — array of regex patterns. If any matches, the call is denied.
+#   whitelist — array of regex patterns. If present, only matching calls are allowed.
+#
+# Evaluation order: blacklist → whitelist → mode → tool default.
+#
+# Tools marked "allow" run automatically — no user prompt.
+# Tools marked "ask" always prompt before executing.
+# Path-based tools (file_*, list_dir, git) are additionally guarded
+# by the system path security layer regardless of permission level.
+
+[tool_permissions]
+shell          = "ask"        # Execute shell commands
+file_read      = "allow"      # Read file contents
+file_write     = "ask"        # Write / create files
+file_append    = "ask"        # Append to files
+file_edit      = "ask"        # Find-and-replace in files
+list_dir       = "allow"      # List directory contents
+ls_tools       = "allow"      # List available tools
+http_get       = "allow"      # HTTP GET requests
+http_request   = "allow"      # HTTP requests (any method)
+web_fetch      = "allow"      # Fetch & extract web content
+web_search     = "allow"      # Search the web
+git_operations = "ask"        # Git commands (add, commit, etc.)
+ask            = "allow"      # Request user input
+
+# Examples:
+#   shell          = { blacklist = ["rm\\s+-rf", "sudo", "shutdown"] }
+#   shell          = { whitelist = ["^cargo ", "^npm "], mode = "deny" }
+#   shell          = { blacklist = ["sudo"], whitelist = ["^cargo ", "^npm "] }
+#   file_write     = { blacklist = ["\\.env", "credentials"] }
+#   git_operations = { blacklist = ["push --force", "reset --hard"], mode = "ask" }

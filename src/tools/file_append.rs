@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::Write as _;
 
-use crate::tools::path_security::ensure_not_system_critical_path;
+use crate::tools::path_security::ensure_safe_write_path;
 
 pub struct FileAppendTool;
 
@@ -40,7 +40,7 @@ impl Tool for FileAppendTool {
         let content = args["content"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'content' argument"))?;
-        ensure_not_system_critical_path(path)?;
+        ensure_safe_write_path(path)?;
 
         let mut file = std::fs::OpenOptions::new()
             .create(true)
@@ -71,7 +71,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time should be valid")
             .as_nanos();
-        std::env::temp_dir().join(format!("rai-file-append-{}-{}", nonce, filename))
+        // Use project target dir instead of system temp to avoid /private/var blocking on macOS.
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("test-tmp");
+        fs::create_dir_all(&dir).expect("create test-tmp dir");
+        dir.join(format!("rai-file-append-{}-{}", nonce, filename))
     }
 
     #[test]

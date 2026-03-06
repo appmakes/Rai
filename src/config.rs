@@ -1,11 +1,15 @@
 use anyhow::{bail, Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::provider_catalog;
+
+/// Embedded default configuration — edit src/rules/default_config.toml to change defaults.
+pub const DEFAULT_CONFIG_STR: &str = include_str!("rules/default_config.toml");
 
 const DEFAULT_PROFILE_NAME: &str = "default";
 const DEFAULT_MODEL_NAME: &str = "gpt-4o";
@@ -138,6 +142,8 @@ struct ProfileConfigFile {
     no_tools: bool,
     #[serde(default)]
     auto_approve: bool,
+    #[serde(default)]
+    tool_permissions: HashMap<String, toml::Value>,
 }
 
 impl ProfileConfigFile {
@@ -150,6 +156,7 @@ impl ProfileConfigFile {
             || !self.tool_mode.trim().is_empty()
             || self.no_tools
             || self.auto_approve
+            || !self.tool_permissions.is_empty()
     }
 }
 
@@ -175,6 +182,8 @@ struct CombinedConfigFile {
     no_tools: bool,
     #[serde(default)]
     auto_approve: bool,
+    #[serde(default)]
+    tool_permissions: HashMap<String, toml::Value>,
 }
 
 impl CombinedConfigFile {
@@ -190,6 +199,7 @@ impl CombinedConfigFile {
             tool_mode: profile.tool_mode.clone(),
             no_tools: profile.no_tools,
             auto_approve: profile.auto_approve,
+            tool_permissions: profile.tool_permissions.clone(),
         }
     }
 
@@ -210,6 +220,7 @@ impl CombinedConfigFile {
             tool_mode: self.tool_mode.clone(),
             no_tools: self.no_tools,
             auto_approve: self.auto_approve,
+            tool_permissions: self.tool_permissions.clone(),
         }
     }
 }
@@ -258,6 +269,7 @@ pub struct Config {
     pub tool_mode: String,
     pub no_tools: bool,
     pub auto_approve: bool,
+    pub tool_permissions: HashMap<String, toml::Value>,
     pub api_key: String, // Not serialized, populated at runtime
 }
 
@@ -498,6 +510,7 @@ impl Config {
             tool_mode: file.tool_mode,
             no_tools: file.no_tools,
             auto_approve: file.auto_approve,
+            tool_permissions: file.tool_permissions,
             api_key: String::new(),
         }
     }
@@ -512,6 +525,7 @@ impl Config {
             tool_mode: self.tool_mode.clone(),
             no_tools: self.no_tools,
             auto_approve: self.auto_approve,
+            tool_permissions: self.tool_permissions.clone(),
         }
     }
 
@@ -522,17 +536,20 @@ impl Config {
         validate_profile_name(&global.default_profile)
     }
 
+    /// Default profile config — values sourced from src/rules/default_config.toml
     fn default_profile_config() -> ProfileConfigFile {
-        ProfileConfigFile {
-            providers: vec!["poe".to_string()],
-            default_provider: Some("poe".to_string()),
+        // Try parsing the embedded default config; fall back to hardcoded values
+        toml::from_str::<ProfileConfigFile>(DEFAULT_CONFIG_STR).unwrap_or(ProfileConfigFile {
+            providers: vec![],
+            default_provider: Some("openai".to_string()),
             default_model: DEFAULT_MODEL_NAME.to_string(),
             provider_base_url: String::new(),
             tool_mode: DEFAULT_TOOL_MODE.to_string(),
             no_tools: false,
             auto_approve: false,
-            provider: "poe".to_string(),
-        }
+            tool_permissions: HashMap::new(),
+            provider: String::new(),
+        })
     }
 
     fn ensure_default_profile_exists(
@@ -592,6 +609,7 @@ impl Config {
             tool_mode: legacy.tool_mode,
             no_tools: legacy.no_tools,
             auto_approve: legacy.auto_approve,
+            tool_permissions: HashMap::new(),
         };
 
         Self::save_profile_config(config_dir, DEFAULT_PROFILE_NAME, &profile_file)?;

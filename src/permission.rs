@@ -1,4 +1,3 @@
-#[cfg(test)]
 use anyhow::Result;
 use regex::Regex;
 use std::fmt;
@@ -7,16 +6,30 @@ use std::fmt;
 #[derive(Debug, Clone, Default)]
 pub enum Permission {
     Allow,
-    Blacklist(Vec<String>),
     AskOnce,
     #[default]
     Ask,
-    Whitelist(Vec<String>),
     Deny,
+    /// Combined rules: check blacklist → whitelist → fallback mode.
+    ///
+    /// Evaluation order:
+    ///   1. If blacklist matches → Deny
+    ///   2. If whitelist is present and matches → Allow
+    ///   3. If whitelist is present but doesn't match → Deny
+    ///   4. Otherwise → fallback to `mode` (or tool default if mode is empty)
+    Rules {
+        blacklist: Vec<String>,
+        whitelist: Vec<String>,
+        /// Fallback mode when neither list matches.
+        /// Empty string means "use the tool's built-in default".
+        mode: String,
+    },
 }
 
+#[allow(dead_code)]
 impl Permission {
-    #[cfg(test)]
+    /// Parse a simple mode string into a Permission.
+    /// Only accepts: "allow", "ask", "ask_once", "deny".
     pub fn parse(s: &str) -> Result<Self> {
         let trimmed = s.trim();
         match trimmed {
@@ -24,73 +37,35 @@ impl Permission {
             "ask_once" => Ok(Permission::AskOnce),
             "ask" => Ok(Permission::Ask),
             "deny" => Ok(Permission::Deny),
-            _ if trimmed.starts_with("blacklist:") => {
-                let patterns = trimmed["blacklist:".len()..]
-                    .trim()
-                    .split('|')
-                    .map(|p| p.trim().to_string())
-                    .filter(|p| !p.is_empty())
-                    .collect();
-                Ok(Permission::Blacklist(patterns))
-            }
-            _ if trimmed.starts_with("whitelist:") => {
-                let patterns = trimmed["whitelist:".len()..]
-                    .trim()
-                    .split('|')
-                    .map(|p| p.trim().to_string())
-                    .filter(|p| !p.is_empty())
-                    .collect();
-                Ok(Permission::Whitelist(patterns))
-            }
-            _ => anyhow::bail!("Invalid permission: '{}'. Expected: allow, deny, ask, ask_once, blacklist:<patterns>, whitelist:<patterns>", trimmed),
+            _ => anyhow::bail!(
+                "Invalid permission: '{}'. Expected: allow, deny, ask, ask_once",
+                trimmed
+            ),
         }
     }
 
-    #[cfg(test)]
     pub fn restrictiveness(&self) -> u8 {
         match self {
             Permission::Allow => 0,
-            Permission::Blacklist(_) => 1,
-            Permission::AskOnce => 2,
-            Permission::Ask => 3,
-            Permission::Whitelist(_) => 4,
-            Permission::Deny => 5,
+            Permission::AskOnce => 1,
+            Permission::Ask => 2,
+            Permission::Rules { .. } => 3,
+            Permission::Deny => 4,
         }
     }
 
-    #[cfg(test)]
     pub fn is_more_restrictive_than(&self, other: &Permission) -> bool {
         self.restrictiveness() > other.restrictiveness()
     }
 
     /// Merge a task-level override into this permission.
     /// Task can only tighten (more restrictive), never relax.
-    /// Blacklist patterns are unioned, whitelist patterns are intersected.
-    #[cfg(test)]
     pub fn merge_override(&self, task_override: &Permission) -> Permission {
-        if !task_override.is_more_restrictive_than(self) {
-            match (self, task_override) {
-                (Permission::Blacklist(global), Permission::Blacklist(task)) => {
-                    let mut merged = global.clone();
-                    for p in task {
-                        if !merged.contains(p) {
-                            merged.push(p.clone());
-                        }
-                    }
-                    return Permission::Blacklist(merged);
-                }
-                (Permission::Whitelist(global), Permission::Whitelist(task)) => {
-                    let merged: Vec<String> = global
-                        .iter()
-                        .filter(|p| task.contains(p))
-                        .cloned()
-                        .collect();
-                    return Permission::Whitelist(merged);
-                }
-                _ => return self.clone(),
-            }
+        if task_override.is_more_restrictive_than(self) {
+            task_override.clone()
+        } else {
+            self.clone()
         }
-        task_override.clone()
     }
 }
 
@@ -98,17 +73,31 @@ impl fmt::Display for Permission {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Permission::Allow => write!(f, "allow"),
-            Permission::Blacklist(p) => write!(f, "blacklist: {}", p.join("|")),
             Permission::AskOnce => write!(f, "ask_once"),
             Permission::Ask => write!(f, "ask"),
-            Permission::Whitelist(p) => write!(f, "whitelist: {}", p.join("|")),
             Permission::Deny => write!(f, "deny"),
+            Permission::Rules {
+                blacklist,
+                whitelist,
+                mode,
+            } => {
+                let mut parts = Vec::new();
+                if !blacklist.is_empty() {
+                    parts.push(format!("blacklist: [{}]", blacklist.join(", ")));
+                }
+                if !whitelist.is_empty() {
+                    parts.push(format!("whitelist: [{}]", whitelist.join(", ")));
+                }
+                if !mode.is_empty() {
+                    parts.push(format!("mode: {}", mode));
+                }
+                write!(f, "{{ {} }}", parts.join(", "))
+            }
         }
     }
 }
 
 /// Check a command string against the permission policy.
-/// Returns Ok(true) if allowed, Ok(false) if denied, Err if needs user input.
 pub enum PermissionDecision {
     Allow,
     Deny(String),
@@ -120,8 +109,13 @@ pub fn check_permission(permission: &Permission, command: &str) -> PermissionDec
         Permission::Allow => PermissionDecision::Allow,
         Permission::Deny => PermissionDecision::Deny("tool is disabled".to_string()),
         Permission::Ask | Permission::AskOnce => PermissionDecision::NeedAsk,
-        Permission::Blacklist(patterns) => {
-            for pattern in patterns {
+        Permission::Rules {
+            blacklist,
+            whitelist,
+            mode,
+        } => {
+            // 1. Check blacklist — if any pattern matches, deny.
+            for pattern in blacklist {
                 if let Ok(re) = Regex::new(pattern) {
                     if re.is_match(command) {
                         return PermissionDecision::Deny(format!(
@@ -131,41 +125,36 @@ pub fn check_permission(permission: &Permission, command: &str) -> PermissionDec
                     }
                 }
             }
-            PermissionDecision::Allow
-        }
-        Permission::Whitelist(patterns) => {
-            for pattern in patterns {
-                if let Ok(re) = Regex::new(pattern) {
-                    if re.is_match(command) {
-                        return PermissionDecision::Allow;
+
+            // 2. Check whitelist — if present and matches, allow.
+            if !whitelist.is_empty() {
+                for pattern in whitelist {
+                    if let Ok(re) = Regex::new(pattern) {
+                        if re.is_match(command) {
+                            return PermissionDecision::Allow;
+                        }
                     }
                 }
+                // Whitelist present but no match → deny.
+                return PermissionDecision::Deny("not in whitelist".to_string());
             }
-            PermissionDecision::Deny("not in whitelist".to_string())
+
+            // 3. Fallback to mode.
+            if mode.is_empty() {
+                // No mode specified — use tool default (Ask).
+                PermissionDecision::NeedAsk
+            } else {
+                match mode.as_str() {
+                    "allow" => PermissionDecision::Allow,
+                    "deny" => PermissionDecision::Deny("tool is disabled".to_string()),
+                    _ => PermissionDecision::NeedAsk,
+                }
+            }
         }
     }
 }
 
-const HARDCODED_BLOCKLIST: &[&str] = &[
-    r"rm\s+-rf\s+/[^\.]",
-    r"rm\s+-rf\s+/$",
-    r"mkfs\.",
-    r"dd\s+if=.*of=/dev/",
-    r":\(\)\{.*\|.*&\s*\};",
-    r">\s*/dev/sd",
-    r"chmod\s+-R\s+777\s+/",
-    r"shutdown",
-    r"reboot",
-];
-
-pub fn check_global_blocklist(command: &str, user_patterns: &[String]) -> Option<String> {
-    for pattern in HARDCODED_BLOCKLIST {
-        if let Ok(re) = Regex::new(pattern) {
-            if re.is_match(command) {
-                return Some(format!("blocked by safety rule: {}", pattern));
-            }
-        }
-    }
+pub fn check_user_blocklist(command: &str, user_patterns: &[String]) -> Option<String> {
     for pattern in user_patterns {
         if let Ok(re) = Regex::new(pattern) {
             if re.is_match(command) {
@@ -198,39 +187,22 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_blacklist() {
-        let p = Permission::parse("blacklist: rm|shutdown|reboot").unwrap();
-        if let Permission::Blacklist(patterns) = p {
-            assert_eq!(patterns, vec!["rm", "shutdown", "reboot"]);
-        } else {
-            panic!("Expected Blacklist");
-        }
+    fn test_parse_rejects_old_formats() {
+        // Old pipe-delimited blacklist/whitelist strings are no longer supported.
+        assert!(Permission::parse("blacklist: rm|shutdown").is_err());
+        assert!(Permission::parse("whitelist: ^curl|^wget").is_err());
     }
 
     #[test]
-    fn test_parse_whitelist() {
-        let p = Permission::parse("whitelist: ^curl|^wget").unwrap();
-        if let Permission::Whitelist(patterns) = p {
-            assert_eq!(patterns, vec!["^curl", "^wget"]);
-        } else {
-            panic!("Expected Whitelist");
-        }
-    }
-
-    #[test]
-    fn test_restrictiveness_order() {
-        assert!(Permission::Deny.is_more_restrictive_than(&Permission::Allow));
-        assert!(Permission::Ask.is_more_restrictive_than(&Permission::Blacklist(vec![])));
-        assert!(Permission::Whitelist(vec![]).is_more_restrictive_than(&Permission::Ask));
-        assert!(!Permission::Allow.is_more_restrictive_than(&Permission::Deny));
-    }
-
-    #[test]
-    fn test_check_blacklist() {
-        let perm = Permission::Blacklist(vec![r"rm\s+-rf".to_string(), "shutdown".to_string()]);
+    fn test_rules_blacklist_denies() {
+        let perm = Permission::Rules {
+            blacklist: vec![r"rm\s+-rf".to_string(), "shutdown".to_string()],
+            whitelist: vec![],
+            mode: String::new(),
+        };
         assert!(matches!(
             check_permission(&perm, "ls -la"),
-            PermissionDecision::Allow
+            PermissionDecision::NeedAsk
         ));
         assert!(matches!(
             check_permission(&perm, "rm -rf /tmp"),
@@ -243,14 +215,18 @@ mod tests {
     }
 
     #[test]
-    fn test_check_whitelist() {
-        let perm = Permission::Whitelist(vec![r"^curl\s".to_string(), r"^wget\s".to_string()]);
+    fn test_rules_whitelist_allows_and_denies() {
+        let perm = Permission::Rules {
+            blacklist: vec![],
+            whitelist: vec![r"^cargo ".to_string(), r"^npm ".to_string()],
+            mode: String::new(),
+        };
         assert!(matches!(
-            check_permission(&perm, "curl -s example.com"),
+            check_permission(&perm, "cargo build"),
             PermissionDecision::Allow
         ));
         assert!(matches!(
-            check_permission(&perm, "wget example.com"),
+            check_permission(&perm, "npm install"),
             PermissionDecision::Allow
         ));
         assert!(matches!(
@@ -260,31 +236,74 @@ mod tests {
     }
 
     #[test]
-    fn test_global_blocklist() {
-        assert!(check_global_blocklist("rm -rf /", &[]).is_some());
-        assert!(check_global_blocklist("mkfs.ext4 /dev/sda", &[]).is_some());
-        assert!(check_global_blocklist("curl example.com", &[]).is_none());
-        assert!(check_global_blocklist("ls -la", &[]).is_none());
+    fn test_rules_blacklist_takes_precedence_over_whitelist() {
+        let perm = Permission::Rules {
+            blacklist: vec![r"--force".to_string()],
+            whitelist: vec![r"^git ".to_string()],
+            mode: String::new(),
+        };
+        // Whitelisted but also blacklisted → deny wins.
+        assert!(matches!(
+            check_permission(&perm, "git push --force"),
+            PermissionDecision::Deny(_)
+        ));
+        // Whitelisted and not blacklisted → allow.
+        assert!(matches!(
+            check_permission(&perm, "git commit -m 'msg'"),
+            PermissionDecision::Allow
+        ));
     }
 
     #[test]
-    fn test_global_blocklist_user_patterns() {
+    fn test_rules_fallback_mode() {
+        let perm = Permission::Rules {
+            blacklist: vec!["sudo".to_string()],
+            whitelist: vec![],
+            mode: "allow".to_string(),
+        };
+        // No blacklist match, no whitelist → fallback to "allow".
+        assert!(matches!(
+            check_permission(&perm, "ls -la"),
+            PermissionDecision::Allow
+        ));
+        // Blacklist match → deny regardless of fallback.
+        assert!(matches!(
+            check_permission(&perm, "sudo rm"),
+            PermissionDecision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn test_rules_empty_mode_defaults_to_ask() {
+        let perm = Permission::Rules {
+            blacklist: vec![],
+            whitelist: vec![],
+            mode: String::new(),
+        };
+        assert!(matches!(
+            check_permission(&perm, "anything"),
+            PermissionDecision::NeedAsk
+        ));
+    }
+
+    #[test]
+    fn test_restrictiveness_order() {
+        assert!(Permission::Deny.is_more_restrictive_than(&Permission::Allow));
+        assert!(Permission::Ask.is_more_restrictive_than(&Permission::AskOnce));
+        assert!(!Permission::Allow.is_more_restrictive_than(&Permission::Deny));
+    }
+
+    #[test]
+    fn test_user_blocklist() {
         let user = vec!["DROP\\s+TABLE".to_string()];
-        assert!(check_global_blocklist("DROP TABLE users", &user).is_some());
-        assert!(check_global_blocklist("SELECT * FROM users", &user).is_none());
+        assert!(check_user_blocklist("DROP TABLE users", &user).is_some());
+        assert!(check_user_blocklist("SELECT * FROM users", &user).is_none());
     }
 
     #[test]
-    fn test_merge_blacklist_extends() {
-        let global = Permission::Blacklist(vec!["rm".to_string()]);
-        let task = Permission::Blacklist(vec!["curl".to_string()]);
-        let merged = global.merge_override(&task);
-        if let Permission::Blacklist(patterns) = merged {
-            assert!(patterns.contains(&"rm".to_string()));
-            assert!(patterns.contains(&"curl".to_string()));
-        } else {
-            panic!("Expected Blacklist");
-        }
+    fn test_user_blocklist_empty() {
+        assert!(check_user_blocklist("rm -rf /", &[]).is_none());
+        assert!(check_user_blocklist("anything", &[]).is_none());
     }
 
     #[test]

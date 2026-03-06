@@ -716,7 +716,9 @@ async fn handle_run(
 
     let mut current_prompt = prompt;
     if use_agent {
-        let builtin = tools::builtin_tools();
+        let mut builtin = tools::builtin_tools();
+        // Apply per-tool permission overrides from config
+        tools::apply_tool_permissions(&mut builtin, &config.tool_permissions);
         let agent_config = agent::AgentConfig {
             auto_approve,
             detail_enabled: opts.detail_enabled,
@@ -2520,6 +2522,7 @@ mod tests {
             tool_mode: "ask".to_string(),
             no_tools: false,
             auto_approve: false,
+            tool_permissions: std::collections::HashMap::new(),
             api_key: api_key.to_string(),
         }
     }

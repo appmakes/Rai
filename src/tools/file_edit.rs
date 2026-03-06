@@ -3,7 +3,7 @@ use crate::permission::Permission;
 use anyhow::Result;
 use serde_json::{json, Value};
 
-use crate::tools::path_security::ensure_not_system_critical_path;
+use crate::tools::path_security::ensure_safe_write_path;
 
 pub struct FileEditTool;
 
@@ -38,7 +38,7 @@ impl Tool for FileEditTool {
         let path = args["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
-        ensure_not_system_critical_path(path)?;
+        ensure_safe_write_path(path)?;
         let old_text = args["old_text"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'old_text' argument"))?;
@@ -86,7 +86,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time should be valid")
             .as_nanos();
-        std::env::temp_dir().join(format!("rai-file-edit-{}-{}", nonce, filename))
+        // Use project target dir instead of system temp to avoid /private/var blocking on macOS.
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("test-tmp");
+        fs::create_dir_all(&dir).expect("create test-tmp dir");
+        dir.join(format!("rai-file-edit-{}-{}", nonce, filename))
     }
 
     #[test]
