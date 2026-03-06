@@ -18,19 +18,19 @@
 
 ## Install
 
-**macOS** (Homebrew):
+**cargo:**
 
 ```bash
-brew install rai
+cargo install rai-cli
 ```
 
-**Linux / macOS** (shell script):
+**curl:**
 
 ```bash
 curl -sSL https://appmakes.github.io/Rai/install.sh | sh
 ```
 
-**From source** (requires Rust toolchain):
+**From source:**
 
 ```bash
 cargo install --path .
