@@ -56,19 +56,21 @@ body {
 }
 
 .avatar {
-  width: 80px;
-  height: 80px;
+  width: 72px;
+  height: 72px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   cursor: default;
+  margin-left: -6px;
+  margin-bottom: -4px;
 }
 
 .avatar svg {
-  width: 80px;
-  height: 80px;
-  color: var(--color-text);
+  width: 72px;
+  height: 72px;
+  color: var(--color-muted);
 }
 
 /* Eye tracking */
