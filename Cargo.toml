@@ -1,11 +1,19 @@
 [package]
-name = "rai"
+name = "rai-cli"
 version = "1.0.0"
 edition = "2021"
 license = "MIT"
 authors = ["appmakes.io"]
+description = "Run AI instructions directly from your terminal, scripts, and CI/CD pipelines"
+repository = "https://github.com/appmakes/Rai"
+homepage = "https://appmakes.github.io/Rai/"
+keywords = ["ai", "cli", "terminal", "llm", "automation"]
+categories = ["command-line-utilities"]
+readme = "README.md"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "rai"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.95"
