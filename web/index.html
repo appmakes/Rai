@@ -18,16 +18,16 @@
       <!-- Header -->
       <header class="header">
         <div class="brand-lockup">
-          <div class="avatar">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -15 200 210" overflow="visible">
-              <path d="M 40,60 L 40,160 Q 40,180 60,180 L 140,180 Q 160,180 160,160 L 160,60" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-              <line x1="30" y1="30" x2="80" y2="10" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" transform="rotate(-15 40 60)"/>
-              <g>
-                <circle cx="70" cy="110" r="8" fill="currentColor"/>
-                <circle cx="130" cy="110" r="8" fill="currentColor"/>
+          <div class="avatar" id="rai-avatar">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -15 200 210" overflow="visible" id="rai-icon">
+              <path d="M 40,60 L 40,160 Q 40,180 60,180 L 140,180 Q 160,180 160,160 L 160,60" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="30" y1="30" x2="80" y2="10" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" transform="rotate(-15 40 60)"/>
+              <g id="rai-eyes">
+                <ellipse id="rai-eye-l" cx="70" cy="110" rx="9" ry="9" fill="currentColor"/>
+                <ellipse id="rai-eye-r" cx="130" cy="110" rx="9" ry="9" fill="currentColor"/>
               </g>
-              <path d="M 70,150 L 130,150" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M 40,160 Q 40,180 60,180 L 140,180 Q 160,180 160,160" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M 70,150 L 130,150" fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M 40,160 Q 40,180 60,180 L 140,180 Q 160,180 160,160" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </div>
           <span class="title-text">Rai</span>
@@ -153,17 +153,76 @@
       });
     });
 
-    // Copy to clipboard
-    document.getElementById('copy-btn').addEventListener('click', () => {
+    // Copy to clipboard with checkmark animation
+    const copyIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+    const checkIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+    document.getElementById('copy-btn').addEventListener('click', function() {
+      const btn = this;
       const text = document.getElementById('install-cmd').textContent;
       navigator.clipboard.writeText(text).then(() => {
-        const btn = document.getElementById('copy-btn');
-        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        btn.innerHTML = checkIcon;
+        btn.classList.add('copied');
         setTimeout(() => {
-          btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
-        }, 2000);
+          btn.classList.remove('copied');
+          setTimeout(() => { btn.innerHTML = copyIcon; }, 200);
+        }, 1800);
       });
     });
+
+    // === Rai icon: eye tracking + blink ===
+    const avatar = document.getElementById('rai-avatar');
+    const eyeL = document.getElementById('rai-eye-l');
+    const eyeR = document.getElementById('rai-eye-r');
+    const eyes = document.getElementById('rai-eyes');
+
+    // Eye centers in SVG coordinates
+    const eyeLCenter = { x: 70, y: 110 };
+    const eyeRCenter = { x: 130, y: 110 };
+    const maxOffset = 5; // max px the pupil moves in SVG space
+
+    document.addEventListener('mousemove', (e) => {
+      const rect = avatar.getBoundingClientRect();
+      const iconCenterX = rect.left + rect.width / 2;
+      const iconCenterY = rect.top + rect.height / 2;
+
+      const dx = e.clientX - iconCenterX;
+      const dy = e.clientY - iconCenterY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // Normalize and scale — stronger effect when closer
+      const factor = Math.min(1, 80 / Math.max(dist, 1));
+      const offsetX = (dx / Math.max(dist, 1)) * maxOffset * factor;
+      const offsetY = (dy / Math.max(dist, 1)) * maxOffset * factor;
+
+      eyeL.setAttribute('cx', eyeLCenter.x + offsetX);
+      eyeL.setAttribute('cy', eyeLCenter.y + offsetY);
+      eyeR.setAttribute('cx', eyeRCenter.x + offsetX);
+      eyeR.setAttribute('cy', eyeRCenter.y + offsetY);
+    });
+
+    // Blink at random intervals
+    function doBlink() {
+      eyeL.setAttribute('ry', '1.5');
+      eyeR.setAttribute('ry', '1.5');
+      eyeL.setAttribute('rx', '11');
+      eyeR.setAttribute('rx', '11');
+      setTimeout(() => {
+        eyeL.setAttribute('ry', '9');
+        eyeR.setAttribute('ry', '9');
+        eyeL.setAttribute('rx', '9');
+        eyeR.setAttribute('rx', '9');
+      }, 150);
+    }
+
+    function scheduleBlink() {
+      const delay = 2000 + Math.random() * 4000; // 2-6 seconds
+      setTimeout(() => {
+        doBlink();
+        scheduleBlink();
+      }, delay);
+    }
+    scheduleBlink();
   </script>
 </body>
 </html>

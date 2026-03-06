@@ -55,20 +55,26 @@ body {
 }
 
 .avatar {
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   background: var(--color-surface);
-  border-radius: 24px;
+  border-radius: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  cursor: default;
 }
 
 .avatar svg {
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   color: var(--color-text);
+}
+
+/* Eye tracking */
+#rai-eye-l, #rai-eye-r {
+  transition: ry 0.08s ease;
 }
 
 .title-text {
@@ -156,16 +162,23 @@ body {
   display: flex;
   align-items: center;
   color: var(--color-muted);
-  transition: color 0.2s ease;
+  transition: color 0.2s ease, transform 0.2s ease;
+  flex-shrink: 0;
 }
 
 .copy-btn:hover {
   color: var(--color-text);
 }
 
+.copy-btn.copied {
+  color: rgba(34, 197, 94, 0.8);
+  transform: scale(1.2);
+}
+
 .copy-btn svg {
   width: 16px;
   height: 16px;
+  transition: opacity 0.15s ease;
 }
 
 /* === Feed List === */
