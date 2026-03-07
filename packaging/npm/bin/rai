@@ -1,0 +1,22 @@
+#!/usr/bin/env node
+"use strict";
+
+const path = require("path");
+const { execFileSync } = require("child_process");
+
+const ext = process.platform === "win32" ? ".exe" : "";
+const bin = path.join(__dirname, `rai${ext}`);
+
+try {
+  const result = execFileSync(bin, process.argv.slice(2), {
+    stdio: "inherit",
+    env: process.env,
+  });
+} catch (err) {
+  if (err.status !== null) {
+    process.exit(err.status);
+  }
+  console.error(`Failed to run rai: ${err.message}`);
+  console.error("Try reinstalling: npm install rai-cli");
+  process.exit(1);
+}
