@@ -40,6 +40,10 @@ jobs:
             artifact_name: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
+          - target: aarch64-pc-windows-msvc
+            artifact_name: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            archive: zip
 
     steps:
       - uses: actions/checkout@v4
