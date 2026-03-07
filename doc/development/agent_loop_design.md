@@ -642,32 +642,3 @@ $ rai review.md
 Found 3 potential issues:
 1. ...
 ```
-
-## 16. Implementation Phases
-
-| Phase | Scope | Depends On |
-|-------|-------|------------|
-| C.1 | Provider trait extension (`chat_with_tools`), `ProviderResponse` types | — |
-| C.2 | Permission system: parsing, resolution, two-layer check | — |
-| C.3 | Agent loop core: iteration, tool dispatch, conversation management | C.1, C.2 |
-| C.4 | Built-in tools: `shell`, `ls_tools`, `file_read`, `file_write`, `list_dir`, `http_get` | C.3 |
-| C.5 | Interactive approval prompt (Yes/No/Edit/Always) | C.3 |
-| C.6 | User-defined tools: `tools.toml` parsing, task-file tool merging | C.4 |
-| C.7 | Task-level overrides: restriction enforcement, pattern merging | C.6 |
-| C.8 | Audit logging, iteration limits | C.3 |
-| C.9 | CLI flags: `--yes`, `--ask-all`, `--no-tools`, `--read-only` | C.5 |
-| C.10 | CI/CD mode: auto-deny without `--yes` | C.9 |
-
-## 17. Open Questions
-
-1. **Output truncation**: When a tool returns very large output (e.g., `cat` on a big file), how aggressively should we truncate? Fixed byte limit? Let the model ask for specific line ranges?
-
-2. **Streaming**: Should tool results be streamed to the terminal as they come in, or only shown after the AI processes them?
-
-3. **Cost control**: Agent loops consume many tokens (each round-trip sends the full conversation). Should rai track token usage and warn/stop at a threshold?
-
-4. **Concurrent tool calls**: Some providers return multiple tool calls at once. Should rai execute them in parallel or sequentially? Parallel is faster, but sequential is easier to audit and approve.
-
-5. **`ask_once` scope**: Should `ask_once` memory be per-tool or per-tool-per-arguments? If I approve `shell: curl` once, does that also approve `shell: rm`?
-
-6. **Permission inheritance for user-defined tools**: If a user defines a tool with `command = "curl ..."`, should it inherit the `shell` tool's permission, or start fresh?

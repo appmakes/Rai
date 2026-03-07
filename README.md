@@ -119,11 +119,6 @@ API keys are stored in `~/.local/share/rai/credentials` (mode 0600). Use `--keyr
 - [Providers & Models](doc/guide/providers_and_models.md) - provider setup and model selection
 - [Advanced Flags](doc/guide/advanced_flags.md) - CLI flags and options
 
-### Development docs
-
-- [Architecture](doc/development/architecture.md)
-- [Agent Loop Design](doc/development/agent_loop_design.md)
-
 ## Development
 
 ```bash
