@@ -30,6 +30,12 @@ cargo install rai-cli
 curl -sSL https://appmakes.github.io/Rai/install.sh | sh
 ```
 
+To uninstall the curl-installed binary:
+
+```bash
+curl -sSL https://appmakes.github.io/Rai/uninstall.sh | sh
+```
+
 **From source:**
 
 ```bash
