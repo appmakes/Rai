@@ -27,6 +27,7 @@ pub struct AgentConfig {
     pub detail_enabled: bool,
     pub think_enabled: bool,
     pub silent_enabled: bool,
+    pub plan_enabled: bool,
 }
 
 impl Default for AgentConfig {
@@ -39,6 +40,7 @@ impl Default for AgentConfig {
             detail_enabled: false,
             think_enabled: false,
             silent_enabled: false,
+            plan_enabled: false,
         }
     }
 }
@@ -68,7 +70,7 @@ impl Agent {
     }
 
     pub async fn run(&mut self, prompt: &str) -> Result<String> {
-        let ask_enabled = !self.config.auto_approve && !self.config.silent_enabled;
+        let ask_enabled = self.config.plan_enabled && !self.config.auto_approve && !self.config.silent_enabled;
         let system_prompt = build_system_prompt(self.config.think_enabled, ask_enabled);
         let tool_defs: Vec<ToolDefinition> = self.tools.iter().map(|t| t.definition()).collect();
 
@@ -234,11 +236,11 @@ Do not stop yet.",
             }
         }
 
-        // Layer 0: Block interactive-only tools in non-interactive modes
-        if tc.name == "ask" && (self.config.auto_approve || self.config.silent_enabled) {
+        // Layer 0: Block interactive-only tools unless invoked via `rai plan`
+        if tc.name == "ask" && (!self.config.plan_enabled || self.config.auto_approve || self.config.silent_enabled) {
             return Ok(crate::tools::ToolResult {
                 tool_call_id: tc.id.clone(),
-                output: "The ask tool is unavailable in --yes/--silent mode. \
+                output: "The ask tool is only available via `rai plan`. \
                     Make your best judgment and proceed without user input."
                     .to_string(),
                 success: false,
@@ -480,14 +482,26 @@ fn build_system_prompt(think_enabled: bool, ask_enabled: bool) -> String {
         ""
     };
     let ask_rule = if ask_enabled {
-        "- Use `ask` ONLY when you cannot proceed without the user choosing between options. Never use it for confirmations or when you can decide yourself."
+        "- Use `ask` when you want to clarify the user's intent, confirm a plan, or let them choose between options."
     } else {
         ""
+    };
+    let (proceeding_state, arguments_field, proceeding_rule) = if ask_enabled {
+        (
+            " | \"proceeding\"",
+            "\n    \"arguments\": {\"prompt\":\"...\", \"options\":[\"...\"]} | \"prompt text\" | null,",
+            "- If additional input is still needed, use `\"state\":\"proceeding\"` and provide `arguments`.",
+        )
+    } else {
+        ("", "", "")
     };
 
     SYSTEM_PROMPT_TEMPLATE
         .replace("{{ask_rule}}", ask_rule)
         .replace("{{think_rule}}", think_rule)
+        .replace("{{proceeding_state}}", proceeding_state)
+        .replace("{{arguments_field}}", arguments_field)
+        .replace("{{proceeding_rule}}", proceeding_rule)
         .replace("{{os}}", os)
         .replace("{{cwd}}", &cwd)
 }
