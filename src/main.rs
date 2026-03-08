@@ -599,6 +599,7 @@ struct ExecutionOptions<'a> {
     detail_enabled: bool,
     think_enabled: bool,
     silent_enabled: bool,
+    plan_enabled: bool,
     use_keyring: bool,
 }
 
@@ -611,6 +612,7 @@ fn execution_options_from_cli(cli: &Cli) -> ExecutionOptions<'_> {
         detail_enabled: cli.detail,
         think_enabled: cli.think,
         silent_enabled: cli.silent,
+        plan_enabled: false,
         use_keyring: cli.keyring,
     }
 }
@@ -724,6 +726,7 @@ async fn handle_run(
             detail_enabled: opts.detail_enabled,
             think_enabled: opts.think_enabled,
             silent_enabled: opts.silent_enabled,
+            plan_enabled: opts.plan_enabled,
             ..Default::default()
         };
         let mut agent_loop = agent::Agent::new(provider_impl, model, builtin, agent_config);
@@ -735,9 +738,16 @@ async fn handle_run(
             match print_and_validate_response(&response, opts.think_enabled, opts.silent_enabled)? {
                 ResponseDirective::Done => break,
                 ResponseDirective::NeedsInput(request) => {
-                    let input = collect_followup_input(&request, opts.silent_enabled)?;
-                    current_prompt
-                        .push_str(&format!("\n\n[Additional user input]\n{}\n", input.trim()));
+                    if opts.plan_enabled {
+                        let input = collect_followup_input(&request, opts.silent_enabled)?;
+                        current_prompt
+                            .push_str(&format!("\n\n[Additional user input]\n{}\n", input.trim()));
+                    } else {
+                        current_prompt.push_str(
+                            "\n\n[System]\nUser interaction is not available. \
+                            Use the available tools to accomplish the task yourself.\n"
+                        );
+                    }
                 }
             }
         }
@@ -760,9 +770,16 @@ async fn handle_run(
             match print_and_validate_response(&response, opts.think_enabled, opts.silent_enabled)? {
                 ResponseDirective::Done => break,
                 ResponseDirective::NeedsInput(request) => {
-                    let input = collect_followup_input(&request, opts.silent_enabled)?;
-                    current_prompt
-                        .push_str(&format!("\n\n[Additional user input]\n{}\n", input.trim()));
+                    if opts.plan_enabled {
+                        let input = collect_followup_input(&request, opts.silent_enabled)?;
+                        current_prompt
+                            .push_str(&format!("\n\n[Additional user input]\n{}\n", input.trim()));
+                    } else {
+                        current_prompt.push_str(
+                            "\n\n[System]\nUser interaction is not available. \
+                            Use the available tools to accomplish the task yourself.\n"
+                        );
+                    }
                 }
             }
         }
@@ -2064,7 +2081,9 @@ async fn handle_plan(
         }
     }
 
-    handle_run(task_file, subtask_opt, &final_args, opts).await
+    let mut plan_opts = opts;
+    plan_opts.plan_enabled = true;
+    handle_run(task_file, subtask_opt, &final_args, plan_opts).await
 }
 
 async fn smart_execute(
