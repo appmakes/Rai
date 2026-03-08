@@ -25,22 +25,38 @@ esac
 
 TARGET="${arch}-${os}"
 
-# Get latest release tag
+# GitHub API auth header (optional, avoids rate limits)
+AUTH_HEADER=""
+if [ -n "$GITHUB_TOKEN" ]; then
+  AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"
+fi
+
+# Get latest release with available binaries
 echo "Fetching latest release..."
-LATEST=$(curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+ASSET_NAME="rai-${TARGET}.tar.gz"
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+LATEST=""
+TAGS=$(curl -sSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} "https://api.github.com/repos/${REPO}/releases" | grep '"tag_name"' | head -3 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+
+for tag in $TAGS; do
+  URL="https://github.com/${REPO}/releases/download/${tag}/${ASSET_NAME}"
+  if curl -sSL --head --fail "$URL" >/dev/null 2>&1; then
+    LATEST="$tag"
+    break
+  fi
+done
 
 if [ -z "$LATEST" ]; then
-  echo "Error: could not determine latest release. Check https://github.com/${REPO}/releases"
+  echo "Error: no release with binaries found for ${TARGET}. Check https://github.com/${REPO}/releases"
   exit 1
 fi
 
 echo "Installing rai ${LATEST} for ${TARGET}..."
 
 # Download and extract
-URL="https://github.com/${REPO}/releases/download/${LATEST}/rai-${TARGET}.tar.gz"
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
-
+URL="https://github.com/${REPO}/releases/download/${LATEST}/${ASSET_NAME}"
 curl -sSL "$URL" -o "${TMPDIR}/rai.tar.gz"
 tar xzf "${TMPDIR}/rai.tar.gz" -C "$TMPDIR"
 
