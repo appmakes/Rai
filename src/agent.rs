@@ -481,6 +481,11 @@ fn build_system_prompt(think_enabled: bool, ask_enabled: bool) -> String {
     } else {
         ""
     };
+    let execute_rule = if !ask_enabled {
+        "- If the task requires action (file operations, commands, translations, etc.), execute it using tools. Do not just describe what you would do.\n"
+    } else {
+        ""
+    };
     let ask_rule = if ask_enabled {
         "- Use `ask` when you want to clarify the user's intent, confirm a plan, or let them choose between options."
     } else {
@@ -497,6 +502,7 @@ fn build_system_prompt(think_enabled: bool, ask_enabled: bool) -> String {
     };
 
     SYSTEM_PROMPT_TEMPLATE
+        .replace("{{execute_rule}}", execute_rule)
         .replace("{{ask_rule}}", ask_rule)
         .replace("{{think_rule}}", think_rule)
         .replace("{{proceeding_state}}", proceeding_state)
