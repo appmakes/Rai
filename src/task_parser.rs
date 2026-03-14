@@ -21,6 +21,8 @@ pub struct TaskSection {
 #[derive(Debug)]
 pub struct ParsedTask {
     pub global_frontmatter: TaskFrontmatter,
+    /// The full file body after stripping the global frontmatter.
+    pub body: String,
     pub main_task: Option<TaskSection>,
     pub subtasks: HashMap<String, TaskSection>,
 }
@@ -63,6 +65,20 @@ impl ParsedTask {
     pub fn list_subtasks(&self) -> Vec<&str> {
         self.subtasks.keys().map(|k| k.as_str()).collect()
     }
+
+    /// Collect all declared args from the global frontmatter and all sections.
+    pub fn all_section_args(&self) -> Vec<String> {
+        let mut all = Vec::new();
+        for section in self.main_task.iter().chain(self.subtasks.values()) {
+            for arg in &section.frontmatter.args {
+                if !all.contains(arg) {
+                    all.push(arg.clone());
+                }
+            }
+        }
+        all
+    }
+
 }
 
 fn parse_frontmatter_yaml(yaml_str: &str) -> TaskFrontmatter {
@@ -172,29 +188,66 @@ pub fn parse_task_string(content: &str) -> Result<ParsedTask> {
     let mut main_task: Option<TaskSection> = None;
     let mut subtasks: HashMap<String, TaskSection> = HashMap::new();
 
-    for section in raw_sections {
-        let (section_fm, clean_content) = extract_frontmatter(&section.body);
-        let task_section = TaskSection {
-            name: section.name.clone(),
-            content: clean_content.trim().to_string(),
-            frontmatter: section_fm,
+    // If there are no H1/H2 headers, treat the entire body as the main task.
+    if raw_sections.is_empty() {
+        let trimmed = body.trim();
+        if !trimmed.is_empty() {
+            main_task = Some(TaskSection {
+                name: "main".to_string(),
+                content: trimmed.to_string(),
+                frontmatter: TaskFrontmatter::default(),
+            });
+        }
+    } else {
+        // Text before the first heading is prepended to the main (H1) section.
+        let preamble = if let Some(first_start) = body.find('#') {
+            body[..first_start].trim()
+        } else {
+            ""
         };
 
-        match section.level {
-            1 => {
-                if main_task.is_none() {
-                    main_task = Some(task_section);
+        for section in raw_sections {
+            let (section_fm, clean_content) = extract_frontmatter(&section.body);
+            let mut content_str = clean_content.trim().to_string();
+
+            // Prepend preamble to the first H1 section
+            if section.level == 1 && main_task.is_none() && !preamble.is_empty() {
+                content_str = format!("{}\n\n{}", preamble, content_str);
+            }
+
+            let task_section = TaskSection {
+                name: section.name.clone(),
+                content: content_str,
+                frontmatter: section_fm,
+            };
+
+            match section.level {
+                1 => {
+                    if main_task.is_none() {
+                        main_task = Some(task_section);
+                    }
                 }
+                2 => {
+                    subtasks.insert(section.name.to_lowercase(), task_section);
+                }
+                _ => {}
             }
-            2 => {
-                subtasks.insert(section.name.to_lowercase(), task_section);
-            }
-            _ => {}
+        }
+
+        // If there are only H2 sections (no H1), and there's preamble text,
+        // create a main task from the preamble.
+        if main_task.is_none() && !preamble.is_empty() {
+            main_task = Some(TaskSection {
+                name: "main".to_string(),
+                content: preamble.to_string(),
+                frontmatter: TaskFrontmatter::default(),
+            });
         }
     }
 
     Ok(ParsedTask {
         global_frontmatter,
+        body: body.trim().to_string(),
         main_task,
         subtasks,
     })
@@ -363,6 +416,46 @@ Special content.
     }
 
     #[test]
+    fn test_plain_text_without_headings() {
+        let content = "Just count the lines in this directory.\n";
+        let parsed = parse_task_string(content).unwrap();
+        assert!(parsed.main_task.is_some());
+        let main = parsed.main_task.unwrap();
+        assert_eq!(main.name, "main");
+        assert_eq!(main.content, "Just count the lines in this directory.");
+    }
+
+    #[test]
+    fn test_frontmatter_only_no_headings() {
+        let content = r#"---
+model: gpt-4o
+args:
+  - path
+---
+
+Count the total lines in {{ path }}.
+"#;
+        let parsed = parse_task_string(content).unwrap();
+        assert_eq!(parsed.global_frontmatter.model, Some("gpt-4o".to_string()));
+        assert!(parsed.main_task.is_some());
+        let main = parsed.main_task.unwrap();
+        assert!(main.content.contains("{{ path }}"));
+    }
+
+    #[test]
+    fn test_preamble_before_h2_only() {
+        let content = r#"Do some work.
+
+## subtask1
+Sub1 content.
+"#;
+        let parsed = parse_task_string(content).unwrap();
+        assert!(parsed.main_task.is_some());
+        assert_eq!(parsed.main_task.unwrap().content, "Do some work.");
+        assert!(parsed.subtasks.contains_key("subtask1"));
+    }
+
+    #[test]
     fn test_parse_demo_task() {
         let content = r#"---
 model: gpt-4o
@@ -389,4 +482,5 @@ Please generate comprehensive documentation for the code in `{{ filename }}`.
         assert!(parsed.subtasks.contains_key("refactor"));
         assert!(parsed.subtasks.contains_key("docs"));
     }
+
 }

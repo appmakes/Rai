@@ -35,6 +35,52 @@ fn is_interactive() -> bool {
     atty::is(atty::Stream::Stdin) && std::env::var("CI").is_err()
 }
 
+/// When using the shorthand `rai "task" ...args` form, `trailing_var_arg`
+/// causes clap to capture *all* tokens after the task into `args`, including
+/// global flags like `--detail` or `--think`.  This function pulls those flags
+/// back out of `args` and applies them to the `Cli` struct so they take effect.
+fn reapply_global_flags_from_args(cli: &mut Cli) {
+    let mut cleaned: Vec<String> = Vec::new();
+    let mut iter = cli.args.iter().peekable();
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--detail" | "--log" => cli.detail = true,
+            "--think" => cli.think = true,
+            "--bill" => cli.bill = true,
+            "--yes" | "-y" => cli.yes = true,
+            "--silent" | "-s" => cli.silent = true,
+            "--no-tools" => cli.no_tools = true,
+            "--keyring" => cli.keyring = true,
+            "-v" => cli.verbose = cli.verbose.saturating_add(1),
+            "--verbose" => cli.verbose = cli.verbose.saturating_add(1),
+            "--model" | "-m" => {
+                if let Some(value) = iter.next() {
+                    cli.model = Some(value.clone());
+                }
+            }
+            "--profile" => {
+                if let Some(value) = iter.next() {
+                    cli.profile = Some(value.clone());
+                }
+            }
+            other if other.starts_with("--model=") || other.starts_with("-m=") => {
+                if let Some((_, val)) = other.split_once('=') {
+                    cli.model = Some(val.to_string());
+                }
+            }
+            other if other.starts_with("--profile=") => {
+                if let Some((_, val)) = other.split_once('=') {
+                    cli.profile = Some(val.to_string());
+                }
+            }
+            _ => cleaned.push(arg.clone()),
+        }
+    }
+
+    cli.args = cleaned;
+}
+
 fn extract_subtask_from_args(
     explicit_subtask: Option<&str>,
     args: &[String],
@@ -281,13 +327,26 @@ Suggestions:\n\
     Ok(())
 }
 
-fn compose_adhoc_prompt(task: &str, piped_stdin: Option<&str>) -> String {
-    match piped_stdin {
-        Some(stdin) if !stdin.trim().is_empty() => {
-            format!("{}\n\n{}", task, stdin.trim_end())
-        }
-        _ => task.to_string(),
+fn compose_adhoc_prompt(task: &str, args: &[String], piped_stdin: Option<&str>) -> String {
+    let mut parts = Vec::new();
+
+    if args.is_empty() {
+        parts.push(task.to_string());
+    } else {
+        // Reconstruct the full user command so the model sees the complete intent.
+        // e.g. task="total file lines" args=["./src"] → "total file lines ./src"
+        // e.g. task="total file lines" args=["--path", "./src"] → "total file lines --path ./src"
+        let full_command = format!("{} {}", task, args.join(" "));
+        parts.push(full_command);
     }
+
+    if let Some(stdin) = piped_stdin {
+        if !stdin.trim().is_empty() {
+            parts.push(stdin.trim_end().to_string());
+        }
+    }
+
+    parts.join("\n\n")
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -668,17 +727,28 @@ async fn handle_run(
 
     let (prompt, model) = if is_file {
         let parsed = task_parser::parse_task_file(task_path)?;
-        let section = parsed.get_section(subtask)?;
+
+        // Always send the full file body to the AI — do not clip by headings.
+        // Use frontmatter only for metadata (model, args for template rendering).
+        let all_section_args = parsed.all_section_args();
         let resolved = resolve_task_arguments(
             &parsed.global_frontmatter.args,
-            &section.frontmatter.args,
-            &section.content,
+            &all_section_args,
+            &parsed.body,
             args,
             is_interactive(),
         )?;
-        let variables = resolved.variables;
+        let rendered = template::render(&parsed.body, &resolved.variables)?;
 
-        let rendered = template::render(&section.content, &variables)?;
+        let prompt = if let Some(sub) = subtask {
+            format!(
+                "[Focus on sub-task: {}]\n\n{}",
+                sub.trim_start_matches('#'),
+                rendered
+            )
+        } else {
+            rendered
+        };
 
         let effective_model = opts
             .model_override
@@ -686,8 +756,8 @@ async fn handle_run(
             .or_else(|| parsed.effective_model(subtask))
             .unwrap_or(config.default_model.clone());
 
-        info!("Task: {} (section: {})", task, section.name);
-        (rendered, effective_model)
+        info!("Task: {} (file: {})", task, task_path.display());
+        (prompt, effective_model)
     } else {
         let model = opts
             .model_override
@@ -697,7 +767,7 @@ async fn handle_run(
             PipedStdin::Content(content) => Some(content.as_str()),
             PipedStdin::NotPiped | PipedStdin::Empty => None,
         };
-        let prompt = compose_adhoc_prompt(task, piped_content);
+        let prompt = compose_adhoc_prompt(task, args, piped_content);
         (prompt, model)
     };
 
@@ -732,9 +802,9 @@ async fn handle_run(
         let mut agent_loop = agent::Agent::new(provider_impl, model, builtin, agent_config);
 
         loop {
-            let agent_prompt =
-                apply_status_contract_prompt(current_prompt.clone(), opts.silent_enabled);
-            let response = agent_loop.run(&agent_prompt).await?;
+            // The agent's system prompt already includes the output contract,
+            // so we do not append a second copy here.
+            let response = agent_loop.run(&current_prompt).await?;
             match print_and_validate_response(&response, opts.think_enabled, opts.silent_enabled)? {
                 ResponseDirective::Done => break,
                 ResponseDirective::NeedsInput(request) => {
@@ -756,7 +826,11 @@ async fn handle_run(
         loop {
             exchange_number += 1;
             let provider_prompt = apply_think_mode_prompt(
-                apply_status_contract_prompt(current_prompt.clone(), opts.silent_enabled),
+                apply_status_contract_prompt(
+                    current_prompt.clone(),
+                    opts.silent_enabled,
+                    opts.plan_enabled,
+                ),
                 opts.think_enabled,
             );
             if opts.detail_enabled {
@@ -966,15 +1040,32 @@ fn apply_think_mode_prompt(base_prompt: String, think_enabled: bool) -> String {
     )
 }
 
-fn apply_status_contract_prompt(base_prompt: String, silent_enabled: bool) -> String {
-    let silent_rule = if silent_enabled {
-        "Silent mode is enabled. Do not return `state: \"proceeding\"`; choose `success` or `fail`."
+fn apply_status_contract_prompt(
+    base_prompt: String,
+    silent_enabled: bool,
+    plan_enabled: bool,
+) -> String {
+    // "proceeding" is only valid when the user can provide follow-up input
+    // (plan mode and not silenced).
+    let allow_proceeding = plan_enabled && !silent_enabled;
+
+    let (state_enum, arguments_field, proceeding_rule) = if allow_proceeding {
+        (
+            "\"success\" | \"fail\" | \"proceeding\"",
+            "\n  \"arguments\": {\"prompt\":\"...\", \"options\":[\"...\",\"...\"]} | \"prompt text\" | null,",
+            "If additional input/options are needed, return `state: \"proceeding\"` with `arguments` guidance.",
+        )
     } else {
-        "If additional input/options are needed, return `state: \"proceeding\"` with `arguments` guidance."
+        (
+            "\"success\" | \"fail\"",
+            "",
+            "Do not return `state: \"proceeding\"`; choose `success` or `fail`.",
+        )
     };
+
     format!(
-        "{}\n\n[Output contract]\nReturn ONLY valid JSON (no markdown, no extra text):\n{{\n  \"state\": \"success\" | \"fail\" | \"proceeding\",\n  \"output\": \"<cli output string or empty>\",\n  \"description\": \"<human-readable explanation or error reason>\",\n  \"arguments\": {{\"prompt\":\"...\", \"options\":[\"...\",\"...\"]}} | \"prompt text\" | null,\n  \"thinking\": \"<optional, mainly when think mode is enabled>\"\n}}\n{}\nDo not include additional keys unless necessary.",
-        base_prompt, silent_rule
+        "{}\n\n[Output contract]\nReturn ONLY valid JSON (no markdown, no extra text):\n{{\n  \"state\": {},\n  \"output\": \"<cli output string or empty>\",\n  \"description\": \"<human-readable explanation or error reason>\",{}\n  \"thinking\": \"<optional, mainly when think mode is enabled>\"\n}}\n{}\nDo not include additional keys unless necessary.",
+        base_prompt, state_enum, arguments_field, proceeding_rule
     )
 }
 
@@ -2043,22 +2134,31 @@ async fn handle_plan(
         }
     };
 
-    let section = parsed.get_section(subtask_opt)?;
+    let all_section_args = parsed.all_section_args();
     let resolved = resolve_task_arguments(
         &parsed.global_frontmatter.args,
-        &section.frontmatter.args,
-        &section.content,
+        &all_section_args,
+        &parsed.body,
         prefilled_args,
         true,
     )?;
     let mapped = resolved.variables;
 
-    let rendered = template::render(&section.content, &mapped)?;
+    let rendered = template::render(&parsed.body, &mapped)?;
+    let final_prompt = if let Some(sub) = subtask_opt {
+        format!(
+            "[Focus on sub-task: {}]\n\n{}",
+            sub.trim_start_matches('#'),
+            rendered
+        )
+    } else {
+        rendered
+    };
 
     println!("\n=== Final Prompt ===");
-    println!("{}", rendered);
+    println!("{}", final_prompt);
 
-    let approx_tokens = rendered.split_whitespace().count() * 4 / 3;
+    let approx_tokens = final_prompt.split_whitespace().count() * 4 / 3;
     println!("\nEstimated tokens: ~{}", approx_tokens);
 
     let confirm = Confirm::new()
@@ -2100,16 +2200,7 @@ async fn smart_execute(
     }
 
     let parsed = task_parser::parse_task_file(task_path)?;
-
-    let section = match parsed.get_section(subtask) {
-        Ok(s) => s,
-        Err(_) if subtask.is_none() && !parsed.subtasks.is_empty() => {
-            return handle_plan(task, subtask, args, opts).await;
-        }
-        Err(e) => return Err(e),
-    };
-
-    let vars = template::find_variables(&section.content);
+    let vars = template::find_variables(&parsed.body);
 
     if vars.is_empty() || args.len() >= vars.len() {
         handle_run(task, subtask, args, opts).await
@@ -2178,7 +2269,13 @@ async fn main() -> anyhow::Result<()> {
     // Load .env from current directory so POE_API_KEY etc. are available
     let _ = dotenvy::dotenv();
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+
+    // In shorthand mode (`rai "task" ...`), trailing_var_arg causes global
+    // flags like --detail to land in `cli.args`. Pull them back out.
+    if cli.command.is_none() && cli.task.is_some() {
+        reapply_global_flags_from_args(&mut cli);
+    }
 
     let log_level = match cli.verbose {
         0 => Level::WARN,
@@ -2274,22 +2371,74 @@ mod tests {
         apply_status_contract_prompt, apply_think_mode_prompt, compose_adhoc_prompt,
         derive_user_final_state, ensure_non_empty_piped_stdin, extract_thinking_blocks,
         parse_assistant_payload, parse_assistant_status, parse_shorthand_args, parse_task_cli_args,
-        print_and_validate_response, resolve_provider, resolve_task_arguments,
-        response_has_failure_language, strip_internal_status_lines, AssistantStatus, Cli, Config,
+        print_and_validate_response, reapply_global_flags_from_args, resolve_provider,
+        resolve_task_arguments, response_has_failure_language, strip_internal_status_lines,
+        AssistantStatus, Cli, Config,
         PipedStdin, ResponseDirective, UserFinalState,
     };
     use clap::Parser;
 
     #[test]
     fn test_compose_adhoc_prompt_without_stdin() {
-        let prompt = compose_adhoc_prompt("Summarize this", None);
+        let prompt = compose_adhoc_prompt("Summarize this", &[], None);
         assert_eq!(prompt, "Summarize this");
     }
 
     #[test]
     fn test_compose_adhoc_prompt_with_stdin() {
-        let prompt = compose_adhoc_prompt("Summarize this", Some("input text\n"));
+        let prompt = compose_adhoc_prompt("Summarize this", &[], Some("input text\n"));
         assert_eq!(prompt, "Summarize this\n\ninput text");
+    }
+
+    #[test]
+    fn test_compose_adhoc_prompt_with_positional_args() {
+        let args = vec!["./src".to_string()];
+        let prompt = compose_adhoc_prompt("total file lines in", &args, None);
+        assert_eq!(prompt, "total file lines in ./src");
+    }
+
+    #[test]
+    fn test_compose_adhoc_prompt_with_named_args() {
+        let args = vec!["--path".to_string(), "./src".to_string()];
+        let prompt = compose_adhoc_prompt("total file lines", &args, None);
+        assert_eq!(prompt, "total file lines --path ./src");
+    }
+
+    #[test]
+    fn test_compose_adhoc_prompt_with_args_and_stdin() {
+        let args = vec!["./src".to_string()];
+        let prompt = compose_adhoc_prompt("count lines", &args, Some("extra context\n"));
+        assert_eq!(prompt, "count lines ./src\n\nextra context");
+    }
+
+    #[test]
+    fn test_reapply_global_flags_from_args() {
+        let mut cli = Cli::parse_from(["rai", "some task", "./src", "--detail", "--think"]);
+        assert!(!cli.detail);
+        assert!(!cli.think);
+        assert_eq!(cli.args, vec!["./src", "--detail", "--think"]);
+
+        reapply_global_flags_from_args(&mut cli);
+        assert!(cli.detail);
+        assert!(cli.think);
+        assert_eq!(cli.args, vec!["./src".to_string()]);
+    }
+
+    #[test]
+    fn test_reapply_global_flags_preserves_model() {
+        let mut cli = Cli::parse_from(["rai", "task", "--model", "gpt-4o", "./file"]);
+        reapply_global_flags_from_args(&mut cli);
+        assert_eq!(cli.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(cli.args, vec!["./file".to_string()]);
+    }
+
+    #[test]
+    fn test_reapply_global_flags_bill_and_silent() {
+        let mut cli = Cli::parse_from(["rai", "task", "--bill", "-s"]);
+        reapply_global_flags_from_args(&mut cli);
+        assert!(cli.bill);
+        assert!(cli.silent);
+        assert!(cli.args.is_empty());
     }
 
     #[test]
@@ -2334,11 +2483,28 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_status_contract_prompt_adds_status_requirements() {
-        let prompt = apply_status_contract_prompt("Solve this".to_string(), false);
+    fn test_apply_status_contract_prompt_plan_mode_includes_proceeding() {
+        let prompt = apply_status_contract_prompt("Solve this".to_string(), false, true);
         assert!(prompt.contains("[Output contract]"));
-        assert!(prompt.contains("\"state\": \"success\" | \"fail\" | \"proceeding\""));
+        assert!(prompt.contains("\"success\" | \"fail\" | \"proceeding\""));
         assert!(prompt.contains("additional input"));
+        assert!(prompt.contains("arguments"));
+    }
+
+    #[test]
+    fn test_apply_status_contract_prompt_run_mode_excludes_proceeding() {
+        let prompt = apply_status_contract_prompt("Solve this".to_string(), false, false);
+        assert!(prompt.contains("[Output contract]"));
+        // State enum should only have success/fail, no proceeding option
+        assert!(prompt.contains("\"state\": \"success\" | \"fail\","));
+        assert!(!prompt.contains("\"arguments\""));
+    }
+
+    #[test]
+    fn test_apply_status_contract_prompt_silent_excludes_proceeding() {
+        let prompt = apply_status_contract_prompt("Solve this".to_string(), true, true);
+        assert!(prompt.contains("\"state\": \"success\" | \"fail\","));
+        assert!(!prompt.contains("\"arguments\""));
     }
 
     #[test]
